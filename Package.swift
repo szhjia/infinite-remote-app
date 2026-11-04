@@ -10,7 +10,11 @@ let package = Package(
     ],
     targets: [
         .target(name: "RemoteCore"),
-        .executableTarget(name: "RemoteDesk", dependencies: ["RemoteCore"]),
+        .executableTarget(name: "RemoteDesk", dependencies: ["RemoteCore"], resources: [
+            .copy("Resources/XiaomiRemote2Pro.png"),
+            .process("Resources/CommandBridge.xcassets"),
+            .copy("Resources/LICENSE-Tabler.txt")
+        ]),
         .testTarget(name: "RemoteCoreTests", dependencies: ["RemoteCore"]),
         .testTarget(name: "RemoteDeskTests", dependencies: ["RemoteDesk", "RemoteCore"])
     ]

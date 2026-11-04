@@ -5,6 +5,7 @@ import RemoteCore
 
 enum InputMonitorState: Equatable {
     case permission
+    case idle
     case listening
     case failed(Int32)
 }
@@ -12,6 +13,7 @@ enum InputMonitorState: Equatable {
 @MainActor
 protocol RemoteInputSource: AnyObject {
     var onDevices: ([DeviceID]) -> Void { get set }
+    var onMonitorState: (InputMonitorState) -> Void { get set }
     var onPress: (DeviceID, InputCode) -> Void { get set }
     var selectedDevice: DeviceID? { get set }
     func refresh() -> InputMonitorState
@@ -20,25 +22,35 @@ protocol RemoteInputSource: AnyObject {
 @MainActor
 final class HIDMonitor: RemoteInputSource {
     var onDevices: ([DeviceID]) -> Void = { _ in }
+    var onMonitorState: (InputMonitorState) -> Void = { _ in }
     var onPress: (DeviceID, InputCode) -> Void = { _, _ in }
     var selectedDevice: DeviceID? {
-        didSet { if oldValue != selectedDevice { edges = .init() } }
+        didSet {
+            guard oldValue != selectedDevice else { return }
+            edges = .init()
+            updateListening()
+        }
     }
     private let transports = [kIOHIDTransportBluetoothValue, kIOHIDTransportBluetoothLowEnergyValue, "Bluetooth Low Energy"]
     private var manager: IOHIDManager?
-    private var state: InputMonitorState = .permission
-    private var endpoints: [UInt64: DeviceID] = [:]
+    private var hasPermission = false
+    private var state: InputMonitorState = .permission {
+        didSet { if state != oldValue { onMonitorState(state) } }
+    }
+    private var endpoints: [UInt64: (identity: DeviceID, device: IOHIDDevice)] = [:]
+    private var opened: [UInt64: IOHIDDevice] = [:]
     private var edges = InputEdges<UInt64>()
 
     func refresh() -> InputMonitorState {
-        let hasPermission = CGPreflightListenEventAccess()
-        let desiredState: InputMonitorState = hasPermission ? .listening : .permission
-        if manager != nil && state == desiredState {
-            return state
-        }
-        stop()
+        hasPermission = CGPreflightListenEventAccess()
+        if manager == nil { startDiscovery() }
+        updateListening()
+        return state
+    }
 
-        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+    private func startDiscovery() {
+        // Discovery must not open or subscribe to unrelated Bluetooth devices.
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOHIDManagerOptions.independentDevices.rawValue)
         let matching = transports.map {
             [kIOHIDTransportKey: $0]
         }
@@ -56,32 +68,58 @@ final class HIDMonitor: RemoteInputSource {
             let owner = Unmanaged<HIDMonitor>.fromOpaque(context).takeUnretainedValue()
             MainActor.assumeIsolated { owner.detach(device) }
         }, context)
-        state = .permission
-        if hasPermission {
-            IOHIDManagerRegisterInputValueCallback(manager, { context, result, _, value in
-                guard result == kIOReturnSuccess, let context else { return }
-                let owner = Unmanaged<HIDMonitor>.fromOpaque(context).takeUnretainedValue()
-                MainActor.assumeIsolated { owner.handle(value) }
-            }, context)
-            let result = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-            state = result == kIOReturnSuccess ? .listening : .failed(result)
-        }
         self.manager = manager
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         if let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> {
             for device in devices { attach(device, publish: false) }
         }
         publishDevices()
-        return state
     }
 
-    private func stop() {
-        guard let manager else { return }
-        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-        if state != .permission { IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone)) }
-        self.manager = nil
-        endpoints.removeAll()
-        edges = .init()
+    private func updateListening() {
+        let selected = hasPermission ? endpoints.filter { $0.value.identity == selectedDevice } : [:]
+        for id in opened.keys.filter({ selected[$0] == nil }) {
+            closeEndpoint(id)
+        }
+        guard hasPermission else {
+            state = .permission
+            return
+        }
+
+        let options = IOOptionBits(kIOHIDOptionsTypeNone)
+        var firstFailure: IOReturn?
+        for (id, entry) in selected where opened[id] == nil {
+            let device = entry.device
+            let result = IOHIDDeviceOpen(device, options)
+            guard result == kIOReturnSuccess else {
+                if firstFailure == nil { firstFailure = result }
+                continue
+            }
+            opened[id] = device
+            IOHIDDeviceRegisterInputValueCallback(device, { context, result, _, value in
+                guard result == kIOReturnSuccess, let context else { return }
+                let owner = Unmanaged<HIDMonitor>.fromOpaque(context).takeUnretainedValue()
+                MainActor.assumeIsolated { owner.handle(value) }
+            }, Unmanaged.passUnretained(self).toOpaque())
+            IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        }
+
+        // A remote can expose multiple endpoints. Only one needs to open to read input.
+        if !opened.isEmpty {
+            state = .listening
+        } else if let firstFailure {
+            state = .failed(firstFailure)
+        } else {
+            state = .idle
+        }
+    }
+
+    private func closeEndpoint(_ id: UInt64) {
+        guard let device = opened.removeValue(forKey: id) else { return }
+        IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        IOHIDDeviceRegisterInputValueCallback(device, nil, nil)
+        IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        edges.remove(endpoint: id)
     }
 
     private func endpoint(_ device: IOHIDDevice) -> UInt64 {
@@ -100,18 +138,23 @@ final class HIDMonitor: RemoteInputSource {
         let serial = IOHIDDeviceGetProperty(device, kIOHIDSerialNumberKey as CFString) as? String
         let identity = DeviceID(vendor: vendor, product: product, name: name ?? "未命名蓝牙设备",
                                 serial: serial?.isEmpty == false ? serial : nil)
-        let previous = endpoints.updateValue(identity, forKey: endpoint(device))
-        if publish && previous != identity { publishDevices() }
+        let previous = endpoints.updateValue((identity, device), forKey: endpoint(device))
+        if publish && previous?.identity != identity {
+            publishDevices()
+            updateListening()
+        }
     }
 
     private func detach(_ device: IOHIDDevice) {
         let id = endpoint(device)
-        edges.remove(endpoint: id)
-        if endpoints.removeValue(forKey: id) != nil { publishDevices() }
+        if endpoints.removeValue(forKey: id) != nil {
+            publishDevices()
+            updateListening()
+        }
     }
 
     private func publishDevices() {
-        let devices = Set(endpoints.values).sorted {
+        let devices = Set(endpoints.values.map(\.identity)).sorted {
             ($0.name, $0.vendor, $0.product, $0.serial ?? "") < ($1.name, $1.vendor, $1.product, $1.serial ?? "")
         }
         onDevices(devices)
@@ -122,7 +165,7 @@ final class HIDMonitor: RemoteInputSource {
         let element = IOHIDValueGetElement(value)
         let device = IOHIDElementGetDevice(element)
         let id = endpoint(device)
-        guard let identity = endpoints[id], identity == selectedDevice,
+        guard opened[id] != nil, let identity = endpoints[id]?.identity, identity == selectedDevice,
               !IOHIDElementIsRelative(element), IOHIDValueGetLength(value) <= MemoryLayout<CFIndex>.size else { return }
 
         let page = Int(IOHIDElementGetUsagePage(element))

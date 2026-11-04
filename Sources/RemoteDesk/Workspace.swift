@@ -7,7 +7,6 @@ private let accent = Color(red: 0.35, green: 0.39, blue: 0.98)
 struct Workspace: View {
     @Bindable var model: RemoteModel
     @State private var editor: Editor?
-    @State private var showSignals = false
 
     private enum Editor: Identifiable {
         case profile(AgentProfile, isNew: Bool)
@@ -58,17 +57,15 @@ struct Workspace: View {
                 }
             }
         }
-        .sheet(isPresented: $showSignals) { signalSheet }
         .onDisappear { model.cancelLearning() }
     }
 
     private var masthead: some View {
         HStack(spacing: 12) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(accent.gradient, in: RoundedRectangle(cornerRadius: 12))
+            Image("BridgeBrand", bundle: .module)
+                .resizable()
+                .frame(width: 48, height: 48)
+                .padding(-4)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text("遥控台").font(.system(size: 19, weight: .semibold))
@@ -96,7 +93,7 @@ struct Workspace: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 10) {
-                    sectionLabel("设备", icon: "antenna.radiowaves.left.and.right")
+                    sectionLabel("设备", icon: "BridgeDevice")
                     Picker("输入设备", selection: Binding(get: { model.config.selectedDevice }, set: model.selectDevice)) {
                         Text("选择蓝牙设备").tag(Optional<DeviceID>.none)
                         if let selected = model.config.selectedDevice, !model.connected {
@@ -120,7 +117,7 @@ struct Workspace: View {
                     case let .failed(code):
                         Text("无法启动 HID 监听（\(code)）").font(.caption).foregroundStyle(.red)
                         Button("重试") { model.refreshPermissions() }
-                    case .listening:
+                    case .idle, .listening:
                         if model.devices.isEmpty {
                             Text("先在系统设置配对，再按一下遥控器唤醒。")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -132,7 +129,7 @@ struct Workspace: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        sectionLabel("Agent 方案", icon: "square.stack")
+                        sectionLabel("Agent 方案", icon: "BridgeProfiles")
                         Spacer()
                         Button {
                             openEditor(.profile(.init(name: "", target: nil), isNew: true))
@@ -195,17 +192,13 @@ struct Workspace: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("按键诊断", systemImage: "waveform.path") {
-                model.cancelLearning()
-                showSignals = true
-            }
         }
     }
 
     private var inspector: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                sectionLabel("当前键位", icon: "button.programmable")
+                sectionLabel("当前键位", icon: "BridgeMapping")
                 Text(key.name).font(.title2.bold())
             }
             Divider()
@@ -243,11 +236,17 @@ struct Workspace: View {
                     .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                     .textSelection(.enabled)
                 HStack {
-                    Button(signal == nil ? "录入按键" : "重新录入", systemImage: "dot.radiowaves.left.and.right") {
+                    Button {
                         model.startLearning()
+                    } label: {
+                        Label {
+                            Text(signal == nil ? "录入按键" : "重新录入")
+                        } icon: {
+                            Image("BridgeLearn", bundle: .module)
+                        }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!model.canReadKeys || !model.isEnabled)
+                    .disabled(!model.canReadKeys || !model.isEnabled || model.isDiagnosing)
                     if signal != nil {
                         Button("清除") { model.forget(key.id) }
                     }
@@ -275,7 +274,16 @@ struct Workspace: View {
                 HStack {
                     Button("配置动作") { openEditor(.action(profile, key)) }
                     if let action {
-                        Button("试运行") { model.testAction(action) }.disabled(model.isRunning || model.learning != nil)
+                        Button {
+                            model.testAction(action)
+                        } label: {
+                            Label {
+                                Text("试运行")
+                            } icon: {
+                                Image("BridgeRun", bundle: .module)
+                            }
+                        }
+                        .disabled(model.isRunning || model.learning != nil || model.isDiagnosing)
                     }
                 }
                 if let action, (action == .chatBar || action.requiresPost), !model.canPost {
@@ -286,48 +294,6 @@ struct Workspace: View {
         }
     }
 
-    private var signalSheet: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("按键诊断").font(.title2.bold())
-                Spacer()
-                Button("完成") { showSignals = false }
-            }
-            Group {
-                if !model.connected {
-                    Text("请先配对并选择一个蓝牙 HID 设备。")
-                } else if model.canReadKeys {
-                    Text("按一下「\(model.config.selectedDevice?.name ?? "")」上的实体键，查看收到的信号。")
-                } else {
-                    Text("设备已连接。请返回设备区域开启输入监控或重试监听。")
-                }
-            }
-            .foregroundStyle(.secondary)
-            Text("打开诊断时，实体按键不会触发 Agent 动作。")
-                .font(.caption).foregroundStyle(.secondary)
-            if model.activity.isEmpty {
-                ContentUnavailableView("还没有按键信号", systemImage: "waveform.path")
-            } else {
-                List(model.activity) { event in
-                    Text(event.text).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-                }
-            }
-            HStack {
-                Button("复制信号") {
-                    NSPasteboard.general.clearContents()
-                    let heading = model.config.selectedDevice.map { "\($0.name) · \($0.modelCode)" } ?? ""
-                    NSPasteboard.general.setString(([heading] + model.activity.map(\.text)).joined(separator: "\n"), forType: .string)
-                }.disabled(model.activity.isEmpty)
-                Spacer()
-                Button("打开蓝牙设置") { model.openBluetooth() }
-            }
-        }
-        .padding(20)
-        .frame(width: 515, height: 420)
-        .onAppear { model.isEditing = true }
-        .onDisappear { model.isEditing = false }
-    }
-
     private func openEditor(_ editor: Editor) {
         model.cancelLearning()
         model.isEditing = true
@@ -335,7 +301,11 @@ struct Workspace: View {
     }
 
     private func sectionLabel(_ text: String, icon: String) -> some View {
-        Label(text, systemImage: icon)
+        Label {
+            Text(text)
+        } icon: {
+            Image(icon, bundle: .module)
+        }
             .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
             .accessibilityAddTraits(.isHeader)
     }

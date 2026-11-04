@@ -28,6 +28,7 @@ final class RemoteModel {
         }
     }
     var isEditing = false
+    private(set) var isDiagnosing = false
     var slot = "ok"
 
     private let hid: any RemoteInputSource
@@ -74,11 +75,17 @@ final class RemoteModel {
             self.devices = devices
             if !connected { cancelLearning() }
         }
+        hid.onMonitorState = { [weak self] state in self?.updateMonitorState(state) }
         hid.onPress = { [weak self] device, input in self?.receive(device, input) }
         if didUpgrade { save() }
     }
 
-    var connected: Bool { config.selectedDevice.map(devices.contains) ?? false }
+    var connectedDevice: DeviceID? { config.selectedDevice.flatMap { devices.contains($0) ? $0 : nil } }
+    var connected: Bool { connectedDevice != nil }
+    var showsXiaomiArtwork: Bool {
+        guard let device = connectedDevice else { return false }
+        return device.vendor == 0x2717 && device.product == 0x32B8 && layout == .xiaomi2Pro
+    }
     var canReadKeys: Bool { connected && monitorState == .listening }
     var layout: RemoteLayout { config.activeRemote?.layout ?? .xiaomi2Pro }
     var learnedCount: Int {
@@ -88,9 +95,13 @@ final class RemoteModel {
     var profile: AgentProfile? { config.activeAgent }
 
     func refreshPermissions() {
-        monitorState = hid.refresh()
-        if !canReadKeys { cancelLearning() }
+        updateMonitorState(hid.refresh())
         canPost = CGPreflightPostEventAccess()
+    }
+
+    private func updateMonitorState(_ state: InputMonitorState) {
+        monitorState = state
+        if !canReadKeys { cancelLearning() }
     }
 
     func requestListen() {
@@ -139,7 +150,7 @@ final class RemoteModel {
     }
 
     func startLearning() {
-        guard canReadKeys, isEnabled else { return }
+        guard canReadKeys, isEnabled, !isDiagnosing else { return }
         cancelLearning()
         learning = slot
         feedback = nil
@@ -198,7 +209,35 @@ final class RemoteModel {
         error = nil
     }
 
+    func setDiagnosing(_ active: Bool) {
+        if active { cancelLearning() }
+        isDiagnosing = active
+    }
+
+    func pressVirtualKey(_ id: String) {
+        guard !isEditing, !isDiagnosing, learning == nil, !isRunning,
+              RemoteKey.keys(for: layout).contains(where: { $0.id == id }) else { return }
+        flash(id)
+        feedback = nil
+        error = nil
+        guard canReadKeys else { return }
+        guard isEnabled else {
+            feedback = "遥控触发已暂停"
+            return
+        }
+        guard config.activeRemote?.input(for: id) != nil else {
+            feedback = "此键尚未录入"
+            return
+        }
+        guard let action = profile?.actions[id] else {
+            feedback = "此键尚未分配动作"
+            return
+        }
+        perform(action)
+    }
+
     func testAction(_ action: AgentAction) {
+        guard !isDiagnosing else { return }
         cancelLearning()
         perform(action)
     }
@@ -221,7 +260,7 @@ final class RemoteModel {
         }
         guard let visibleSlot else { return }
         flash(visibleSlot.id)
-        guard isEnabled, !isEditing, let action = profile?.actions[visibleSlot.id] else { return }
+        guard isEnabled, !isEditing, !isDiagnosing, let action = profile?.actions[visibleSlot.id] else { return }
         perform(action)
     }
 

@@ -8,6 +8,7 @@ private final class InputFixture: RemoteInputSource {
     let devices: [DeviceID]
     var state: InputMonitorState = .permission
     var onDevices: ([DeviceID]) -> Void = { _ in }
+    var onMonitorState: (InputMonitorState) -> Void = { _ in }
     var onPress: (DeviceID, InputCode) -> Void = { _, _ in }
     var selectedDevice: DeviceID?
 
@@ -19,6 +20,36 @@ private final class InputFixture: RemoteInputSource {
         onDevices(devices)
         return state
     }
+}
+
+@Test @MainActor
+func hardwareListenerChangesUpdateReadinessWithoutRefreshingPermissions() {
+    let remote = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米蓝牙语音遥控器")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let input = InputFixture(devices: [remote])
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
+
+    model.refreshPermissions()
+    model.selectDevice(remote)
+    input.onMonitorState(.listening)
+    #expect(model.canReadKeys)
+    model.startLearning()
+    #expect(model.learning != nil)
+
+    input.onMonitorState(.failed(-536_870_201))
+    #expect(!model.canReadKeys)
+    #expect(model.learning == nil)
+
+    input.onMonitorState(.listening)
+    #expect(model.canReadKeys)
+    input.onDevices([])
+    input.onMonitorState(.idle)
+    #expect(!model.canReadKeys)
+
+    input.onDevices([remote])
+    input.onMonitorState(.listening)
+    #expect(model.canReadKeys)
 }
 
 @Test(arguments: [false, true]) @MainActor
@@ -135,4 +166,77 @@ private func waitForAction(on model: RemoteModel) async throws {
         try await clock.sleep(for: .milliseconds(5))
     }
     try #require(!model.isRunning)
+}
+
+@Test @MainActor
+func liveRemoteOnlyUsesArtworkForTheSelectedOnlineXiaomi() {
+    let xiaomi = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米蓝牙语音遥控器")
+    let other = DeviceID(vendor: 1, product: 2, name: "通用遥控器")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let input = InputFixture(devices: [xiaomi, other])
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
+    model.refreshPermissions()
+    #expect(model.connectedDevice == nil)
+    #expect(!model.showsXiaomiArtwork)
+
+    model.selectDevice(xiaomi)
+    #expect(model.connectedDevice == xiaomi)
+    #expect(model.showsXiaomiArtwork)
+    #expect(!model.canReadKeys)
+    input.onDevices([other])
+    #expect(model.connectedDevice == nil)
+    #expect(!model.showsXiaomiArtwork)
+
+    model.selectDevice(other)
+    model.selectLayout(.xiaomi2Pro)
+    #expect(model.connectedDevice == other)
+    #expect(!model.showsXiaomiArtwork)
+}
+
+@Test @MainActor
+func diagnosticsSuspendHardwareAndVirtualActionsUntilClosed() async throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米蓝牙语音遥控器")
+    let enter = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: Int(UInt32.max), report: 1, value: 0x28)
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    var dispatched: [AgentAction] = []
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
+        dispatched.append(action)
+    }
+    model.refreshPermissions()
+    model.selectDevice(device)
+
+    model.pressVirtualKey("ok")
+    #expect(!model.isRunning)
+    model.startLearning()
+    input.onPress(device, enter)
+    #expect(model.learnedCount == 1)
+
+    model.startLearning()
+    model.setDiagnosing(true)
+    #expect(model.learning == nil)
+    model.startLearning()
+    #expect(model.learning == nil)
+    let count = model.activity.count
+    input.onPress(device, enter)
+    model.pressVirtualKey("ok")
+    model.testAction(.openApp)
+    #expect(model.activity.count == count + 1)
+    #expect(!model.isRunning)
+    #expect(dispatched.isEmpty)
+
+    model.setDiagnosing(false)
+    model.isEnabled = false
+    model.pressVirtualKey("ok")
+    #expect(!model.isRunning)
+    model.isEnabled = true
+    model.pressVirtualKey("ok")
+    try await waitForAction(on: model)
+    #expect(dispatched == [.openLink("https://chatgpt.com/")])
+    input.onDevices([])
+    model.pressVirtualKey("ok")
+    #expect(!model.isRunning)
 }
