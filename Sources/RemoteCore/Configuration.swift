@@ -13,6 +13,8 @@ public struct DeviceID: Codable, Hashable, Sendable {
         self.serial = serial
     }
 
+    public var isSupportedRemote: Bool { vendor == 0x2717 && product == 0x32B8 }
+
     public var modelCode: String { String(format: "%04X:%04X", vendor, product) }
 }
 
@@ -84,12 +86,26 @@ public struct KeyboardShortcut: Codable, Equatable, Sendable {
     }
 }
 
+public struct SystemHotKey: Codable, Hashable, Sendable {
+    public let keyCode: UInt16
+    public let flags: UInt64
+
+    public init(keyCode: UInt16, flags: UInt64) {
+        self.keyCode = keyCode
+        self.flags = flags
+    }
+}
+
 public enum AgentAction: Codable, Equatable, Sendable {
     case openApp
     case openLink(String)
     case shortcut(KeyboardShortcut)
     case chatBar
     case nextAgent
+    case dictation
+    case displaySleep
+    case appleMenu
+    case systemShortcut(SystemHotKey)
 }
 
 public struct AppTarget: Codable, Equatable, Sendable {
@@ -120,44 +136,62 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
         actions: ["ok": .openApp, "menu": .nextAgent, "key1": .openApp]
     )
 
-    fileprivate static let codexChat = AgentProfile(
-        id: originalCodex.id, name: originalCodex.name, target: originalCodex.target,
-        actions: originalCodex.actions.merging([
-            "home": .shortcut(.init(keyCode: 45, modifiers: [.command], keyName: "N")),
-            "ok": .shortcut(.init(keyCode: 36, modifiers: [.command], keyName: "Return")),
-            "back": .shortcut(.init(keyCode: 53, modifiers: [], keyName: "Esc"))
-        ]) { _, shortcut in shortcut }
+    public static let newChat = KeyboardShortcut(keyCode: 45, modifiers: [.command], keyName: "N")
+    public static let sendDraft = KeyboardShortcut(keyCode: 36, modifiers: [.command], keyName: "Return")
+    public static let stop = KeyboardShortcut(keyCode: 53, modifiers: [], keyName: "Esc")
+
+    public static let chatGPT = AgentProfile(
+        id: "codex", name: "ChatGPT", target: .init(bundleID: "com.openai.codex"),
+        actions: [
+            "power": .displaySleep, "voice": .dictation, "menu": .appleMenu,
+            "home": .shortcut(newChat), "ok": .shortcut(sendDraft), "back": .shortcut(stop)
+        ]
     )
 
-    public static let presets: [AgentProfile] = [
-        .init(id: "chatgpt", name: "ChatGPT", target: .init(bundleID: "com.openai.chat"), actions: [
-            "ok": .openLink("https://chatgpt.com/"), "menu": .nextAgent, "key1": .openLink("https://chatgpt.com/")
-        ]),
-        codexChat,
-        .init(id: "cursor", name: "Cursor", target: .init(bundleID: "com.todesktop.230313mzl4w4u92"), actions: [
-            "ok": .openApp, "menu": .nextAgent, "key1": .openApp
-        ]),
-        .init(id: "claude-code", name: "Claude Code · 终端", target: .init(bundleID: "com.apple.Terminal"), actions: [
-            "ok": .openApp, "menu": .nextAgent, "key1": .openApp
-        ])
-    ]
+    public static let presets = [chatGPT]
+
 }
 
 public struct Configuration: Codable, Equatable, Sendable {
-    public static let currentVersion = 2
+    public static let currentVersion = 3
     public var version = Self.currentVersion
-    public var activeAgentID = "chatgpt"
+    public var activeAgentID = AgentProfile.chatGPT.id
     public var selectedDevice: DeviceID?
     public var remotes: [RemoteMap] = []
     public var agents = AgentProfile.presets
 
     public init() {}
 
-    public mutating func upgradeFromVersionOne() {
-        guard version == 1 else { return }
-        if let index = agents.firstIndex(of: AgentProfile.originalCodex) {
-            agents[index] = AgentProfile.codexChat
+    public mutating func upgradeLegacy() {
+        guard version == 1 || version == 2 else { return }
+        var profile = AgentProfile.chatGPT
+        let codexProfiles = agents.filter { $0.target?.bundleID == profile.target?.bundleID }
+        let legacy = codexProfiles.first { $0.id == activeAgentID } ?? codexProfiles.first { $0.id == profile.id }
+        if let legacy, !(version == 1 && legacy == AgentProfile.originalCodex) {
+            profile.target = legacy.target
+            profile.actions = ["power": .displaySleep, "voice": .dictation]
+            for (slot, action) in legacy.actions {
+                switch action {
+                case .nextAgent where slot == "menu":
+                    profile.actions[slot] = .appleMenu
+                case .openApp, .dictation, .displaySleep, .appleMenu, .systemShortcut:
+                    profile.actions[slot] = action
+                case let .shortcut(shortcut) where shortcut.platform == "macOS":
+                    profile.actions[slot] = action
+                default:
+                    break
+                }
+            }
         }
+        profile.actions = profile.actions.filter { !$0.key.hasPrefix("key") }
+        agents = [profile]
+        activeAgentID = profile.id
+        remotes = remotes.filter { $0.device.isSupportedRemote }.map { remote in
+            var remote = remote
+            remote.layout = .xiaomi2Pro
+            return remote
+        }
+        if selectedDevice?.isSupportedRemote != true { selectedDevice = nil }
         version = Self.currentVersion
     }
 
@@ -165,22 +199,16 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var activeRemote: RemoteMap? { remotes.first { $0.device == selectedDevice } }
 
     public mutating func selectDevice(_ device: DeviceID) {
+        guard device.isSupportedRemote else { return }
         selectedDevice = device
         if !remotes.contains(where: { $0.device == device }) {
-            let layout: RemoteLayout = device.vendor == 0x2717 && device.product == 0x32B8 ? .xiaomi2Pro : .generic
-            remotes.append(RemoteMap(device: device, layout: layout))
+            remotes.append(RemoteMap(device: device))
         }
     }
 
     public mutating func updateRemote(_ edit: (inout RemoteMap) -> Void) {
         guard let index = remotes.firstIndex(where: { $0.device == selectedDevice }) else { return }
         edit(&remotes[index])
-    }
-
-    public mutating func nextAgent() {
-        guard !agents.isEmpty else { return }
-        let index = agents.firstIndex { $0.id == activeAgentID }.map { ($0 + 1) % agents.count } ?? 0
-        activeAgentID = agents[index].id
     }
 
     public func match(device: DeviceID, input: InputCode) -> String? {
@@ -198,15 +226,21 @@ public struct InputEdges<Endpoint: Hashable> {
 
     public init() {}
 
-    // An analog/button-array element may change from one active value to another
-    // without emitting an idle value in between (e.g. a four-way HID hat).
-    public mutating func press(endpoint: Endpoint, cookie: Int, value: Int, isActive: Bool) -> Bool {
+    public enum Change: Equatable {
+        case pressed(Int)
+        case released(Int)
+        case replaced(Int)
+    }
+
+    // An array or hat may replace its active value without passing through neutral.
+    public mutating func changes(endpoint: Endpoint, cookie: Int, value: Int, isActive: Bool) -> [Change] {
         let key = Element(endpoint: endpoint, cookie: cookie)
         if !isActive {
-            held.removeValue(forKey: key)
-            return false
+            return held.removeValue(forKey: key).map { [.released($0)] } ?? []
         }
-        return held.updateValue(value, forKey: key) != value
+        let previous = held.updateValue(value, forKey: key)
+        if previous == value { return [] }
+        return previous.map { [.replaced($0), .pressed(value)] } ?? [.pressed(value)]
     }
 
     public mutating func remove(endpoint: Endpoint) {

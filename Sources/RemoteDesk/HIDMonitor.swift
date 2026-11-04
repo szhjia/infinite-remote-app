@@ -8,22 +8,37 @@ enum InputMonitorState: Equatable {
     case idle
     case listening
     case failed(Int32)
+    case ambiguous
 }
 
 @MainActor
 protocol RemoteInputSource: AnyObject {
     var onDevices: ([DeviceID]) -> Void { get set }
     var onMonitorState: (InputMonitorState) -> Void { get set }
-    var onPress: (DeviceID, InputCode) -> Void { get set }
+    var onEvent: (DeviceID, RemoteInputEvent) -> Void { get set }
+    var onAmbiguousDevices: (Set<DeviceID>) -> Void { get set }
     var selectedDevice: DeviceID? { get set }
     func refresh() -> InputMonitorState
+}
+
+struct RemoteInputOrigin: Equatable {
+    let endpoint: UInt64
+    let cookie: Int
+}
+
+enum RemoteInputEvent {
+    case pressed(InputCode, origin: RemoteInputOrigin? = nil)
+    case released(InputCode, origin: RemoteInputOrigin? = nil)
+    case replaced(InputCode, origin: RemoteInputOrigin)
+    case endpointClosed(UInt64)
 }
 
 @MainActor
 final class HIDMonitor: RemoteInputSource {
     var onDevices: ([DeviceID]) -> Void = { _ in }
     var onMonitorState: (InputMonitorState) -> Void = { _ in }
-    var onPress: (DeviceID, InputCode) -> Void = { _, _ in }
+    var onEvent: (DeviceID, RemoteInputEvent) -> Void = { _, _ in }
+    var onAmbiguousDevices: (Set<DeviceID>) -> Void = { _ in }
     var selectedDevice: DeviceID? {
         didSet {
             guard oldValue != selectedDevice else { return }
@@ -37,7 +52,14 @@ final class HIDMonitor: RemoteInputSource {
     private var state: InputMonitorState = .permission {
         didSet { if state != oldValue { onMonitorState(state) } }
     }
-    private var endpoints: [UInt64: (identity: DeviceID, device: IOHIDDevice)] = [:]
+    private struct Endpoint {
+        let identity: DeviceID
+        let device: IOHIDDevice
+        let location: Int?
+    }
+
+    private var endpoints: [UInt64: Endpoint] = [:]
+    private var ambiguousDevices: Set<DeviceID> = []
     private var opened: [UInt64: IOHIDDevice] = [:]
     private var edges = InputEdges<UInt64>()
 
@@ -77,9 +99,14 @@ final class HIDMonitor: RemoteInputSource {
     }
 
     private func updateListening() {
-        let selected = hasPermission ? endpoints.filter { $0.value.identity == selectedDevice } : [:]
+        let ambiguous = selectedDevice.map(ambiguousDevices.contains) ?? false
+        let selected = hasPermission && !ambiguous ? endpoints.filter { $0.value.identity == selectedDevice } : [:]
         for id in opened.keys.filter({ selected[$0] == nil }) {
             closeEndpoint(id)
+        }
+        if ambiguous {
+            state = .ambiguous
+            return
         }
         guard hasPermission else {
             state = .permission
@@ -120,6 +147,7 @@ final class HIDMonitor: RemoteInputSource {
         IOHIDDeviceRegisterInputValueCallback(device, nil, nil)
         IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
         edges.remove(endpoint: id)
+        if let selectedDevice { onEvent(selectedDevice, .endpointClosed(id)) }
     }
 
     private func endpoint(_ device: IOHIDDevice) -> UInt64 {
@@ -138,7 +166,10 @@ final class HIDMonitor: RemoteInputSource {
         let serial = IOHIDDeviceGetProperty(device, kIOHIDSerialNumberKey as CFString) as? String
         let identity = DeviceID(vendor: vendor, product: product, name: name ?? "未命名蓝牙设备",
                                 serial: serial?.isEmpty == false ? serial : nil)
-        let previous = endpoints.updateValue((identity, device), forKey: endpoint(device))
+        guard identity.isSupportedRemote else { return }
+        let location = IOHIDDeviceGetProperty(device, kIOHIDLocationIDKey as CFString) as? Int
+        let previous = endpoints.updateValue(.init(identity: identity, device: device, location: location),
+                                             forKey: endpoint(device))
         if publish && previous?.identity != identity {
             publishDevices()
             updateListening()
@@ -154,7 +185,16 @@ final class HIDMonitor: RemoteInputSource {
     }
 
     private func publishDevices() {
-        let devices = Set(endpoints.values.map(\.identity)).sorted {
+        let groups = Dictionary(grouping: endpoints.values, by: \.identity)
+        ambiguousDevices = Set(groups.compactMap { identity, entries in
+            guard entries.count > 1 else { return nil }
+            // Multiple HID services can belong to one Bluetooth device.
+            let locations = Set(entries.compactMap(\.location).filter { $0 != 0 })
+            let shareLocation = locations.count == 1 && entries.allSatisfy { ($0.location ?? 0) != 0 }
+            return shareLocation ? nil : identity
+        })
+        onAmbiguousDevices(ambiguousDevices)
+        let devices = groups.keys.sorted {
             ($0.name, $0.vendor, $0.product, $0.serial ?? "") < ($1.name, $1.vendor, $1.product, $1.serial ?? "")
         }
         onDevices(devices)
@@ -186,12 +226,22 @@ final class HIDMonitor: RemoteInputSource {
             return // Exclude pointer axes, sensors and vendor data streams.
         }
 
-        guard edges.press(endpoint: id, cookie: Int(IOHIDElementGetCookie(element)), value: raw, isActive: isActive) else { return }
+        let origin = RemoteInputOrigin(endpoint: id, cookie: Int(IOHIDElementGetCookie(element)))
+        let changes = edges.changes(endpoint: id, cookie: origin.cookie, value: raw, isActive: isActive)
+        guard !changes.isEmpty else { return }
         var top = element
         while let parent = IOHIDElementGetParent(top) { top = parent }
-
-        onPress(identity, InputCode(collectionPage: Int(IOHIDElementGetUsagePage(top)),
-                                    collectionUsage: Int(IOHIDElementGetUsage(top)),
-                                    page: page, usage: usage, report: Int(IOHIDElementGetReportID(element)), value: raw))
+        func code(_ value: Int) -> InputCode {
+            InputCode(collectionPage: Int(IOHIDElementGetUsagePage(top)),
+                      collectionUsage: Int(IOHIDElementGetUsage(top)),
+                      page: page, usage: usage, report: Int(IOHIDElementGetReportID(element)), value: value)
+        }
+        for change in changes {
+            switch change {
+            case let .pressed(value): onEvent(identity, .pressed(code(value), origin: origin))
+            case let .released(value): onEvent(identity, .released(code(value), origin: origin))
+            case let .replaced(value): onEvent(identity, .replaced(code(value), origin: origin))
+            }
+        }
     }
 }

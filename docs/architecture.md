@@ -1,20 +1,18 @@
-# 平台边界
+# 平台与输入边界
 
-Mac 首版用 SwiftUI + SwiftPM，无外部依赖。硬件监听和应用动作各有独立入口，配置模型不依赖任何 macOS UI 或设备 API。
+RemoteDesk 使用 SwiftUI、AppKit 和 SwiftPM。硬件监听、配置与动作分开，\`RemoteCore\` 只依赖 Foundation。
 
-```text
-macOS 蓝牙配对 → IOHIDManager → InputEdges → InputCode
-                                               ↓
-                                      选中设备的实体键位
-                                               ↓
-                                    当前 Agent 对应的动作
-                                               ↓
-                                      NSWorkspace / Quartz
-```
+\`\`\`text
+macOS 蓝牙配对 → IOHIDManager → 按下 / 松开 / 替换
+                                      ↓
+                       已选适配设备的实体键映射
+                                      ↓
+                  ChatGPT 动作 / macOS 动作 / Codex 听写
+\`\`\`
 
-- 使用非独占的 [IOHIDManager 输入回调](https://developer.apple.com/documentation/iokit/1438367-iohidmanagerregisterinputvalueca)，只匹配系统已连接的蓝牙 HID。用户明确选择输入设备后才处理它的按键；设备拔除清理按下状态。
-- 持久化的设备标识由厂商、产品、设备名和可用的序列号组成；无序列号的同型号同名设备可能无法区分。按键信号用应用集合、Usage Page、Usage、Report ID 与激活值表示。端点 ID 和 element cookie 只用于进程内检测按下沿。
-- 系统确认存在小米 2 Pro 对应的 `2717:32B8` 时，首次选中它会默认展示 13 键模板。当前机器读取到的 HID 描述符有一组键盘输入和三组厂商报告。键位模板来自说明书，具体物理键通过真实信号录入。
-- 学习模式消费第一个有效按下沿并保存，不运行 Agent 动作。同一信号重新录入到另一个键位时从原键位移除。无冲突时多个 Agent 可共享同一物理映射。
-- 普通快捷键使用目标进程的 PID，不向当前任意窗口广播。ChatGPT Chat Bar 是例外：按 [OpenAI 文档](https://help.openai.com/en/articles/9295241-accessing-the-launcher-chatgpt-macos-app) 向系统发送 ⌥Space，并先检查支持 Chat Bar 的应用已运行。macOS 将读取键盘与发送快捷键的权限分开。
-- Windows 版建议用 WinUI 3 构建窗口、托盘与设置，用 Raw Input 的设备句柄和 HID Usage 录入信号、使用系统 API 启动程序。快捷键需要 Windows 单独处理焦点、权限与键码，不能直接复制 Mac 的发送方式。版本化 JSON 可作为交换约定，设备指纹、目标应用路径和键码需在目标平台确认或替换。
+- 非独占 [IOHIDManager 输入回调](https://developer.apple.com/documentation/iokit/1438367-iohidmanagerregisterinputvalueca) 仅订阅选中的小米 2 Pro（\`2717:32B8\`）。配置设备以厂商、产品、名称和序列号为标识。进程内利用 HID 位置判断同名服务是否来自同一个物理设备。无法区分的设备不执行动作。
+- 每个 HID 端点和 element cookie 独立跟踪状态。松开事件携带原按下值。数组或方向帽从一个活动值切到另一个值会产生替换，辅助功能听写流程据此取消。端点移除、权限撤销、暂停或诊断也会取消这个流程尚未提交的听写。
+- 配置第 3 版只提供 ChatGPT 桌面端（\`com.openai.codex\`）。旧版本先备份原文件再保存迁移结果，保留适配设备已录入的信号和可用的 Codex 映射。普通应用快捷键发给目标应用进程。系统组合由 \`CopySymbolicHotKeys\` 读取，触发前重新核验。系统设置由用户维护。
+- 小米麦克风键的 F5 按下和松开由 ChatGPT 原生听写处理。遥控台识别这个 HID 信号来显示按键状态，发送草稿由用户按「确定」触发。暂停和诊断模式只停用遥控台自身的动作，ChatGPT 仍可直接接收 F5。
+- 其他已录入为听写动作的信号仍走原有辅助功能流程。开始前要求前台目标应用、可识别的对话、空输入框和唯一的听写入口。松开后仅在同一对话和编辑器中确认转写完成，才调用同一个发送控件。
+- 诊断状态消费信号但不运行动作。配置里的仿真机身和独立遥控器窗口共享同一图片及热点，分别用于定位和执行。

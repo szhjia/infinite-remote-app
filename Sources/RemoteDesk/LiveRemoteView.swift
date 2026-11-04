@@ -9,11 +9,7 @@ struct LiveRemoteView: View {
     var body: some View {
         VStack(spacing: model.showsXiaomiArtwork ? 6 : 10) {
             if let device = model.connectedDevice {
-                if model.showsXiaomiArtwork {
-                    xiaomi
-                } else {
-                    genericKeys
-                }
+                xiaomi
                 caption(device.name)
             } else {
                 Spacer(minLength: 0)
@@ -35,59 +31,8 @@ struct LiveRemoteView: View {
     }
 
     private var xiaomi: some View {
-        GeometryReader { geometry in
-            // Leave the transparent bottom margin out of layout. Hotspots still use the full image.
-            let visibleHeightFraction: CGFloat = 2107.0 / 2172.0
-            let height = min(geometry.size.height / visibleHeightFraction, geometry.size.width * 3)
-            let width = height / 3
-            ZStack(alignment: .topLeading) {
-                if let image = Self.artwork {
-                    Image(nsImage: image)
-                        .resizable()
-                        .frame(width: width, height: height)
-                        .accessibilityHidden(true)
-                        .allowsHitTesting(false)
-                }
-                ForEach(RemoteKey.xiaomi) { key in
-                    if let hit = Self.hotspots[key.id] {
-                        Button { model.pressVirtualKey(key.id) } label: {
-                            Ellipse()
-                                .fill(model.pulse == key.id ? Color.accentColor.opacity(0.50) : .clear)
-                                .contentShape(Ellipse())
-                                .frame(width: width * hit.width, height: height * hit.height)
-                        }
-                        .buttonStyle(.plain)
-                        .position(x: width * hit.x, y: height * hit.y)
-                        .accessibilityLabel(key.name)
-                        .help(help(for: key))
-                    }
-                }
-            }
-            .frame(width: width, height: height)
-            .frame(height: height * visibleHeightFraction, alignment: .top)
-            .clipped()
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        }
-    }
-
-    private var genericKeys: some View {
-        VStack {
-            Spacer(minLength: 0)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                ForEach(RemoteKey.keys(for: model.layout)) { key in
-                    Button { model.pressVirtualKey(key.id) } label: {
-                        Image(systemName: key.symbol)
-                            .frame(width: 38, height: 32)
-                            .background(model.pulse == key.id ? Color.accentColor.opacity(0.35) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .accessibilityLabel(key.name)
-                    .help(help(for: key))
-                }
-            }
-            .padding(10)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        }
+        XiaomiArtwork(highlight: { model.pulse == $0 ? .accentColor.opacity(0.50) : .clear },
+                      help: help(for:), activate: model.pressVirtualKey)
     }
 
     private func caption(_ name: String) -> some View {
@@ -103,7 +48,9 @@ struct LiveRemoteView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            if let error = model.error {
+            if let voiceStatus = model.dictation.phase.message, model.dictation.phase.active {
+                Text(voiceStatus).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            } else if let error = model.error {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
             } else if let feedback = model.feedback {
                 Text(feedback).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -116,16 +63,55 @@ struct LiveRemoteView: View {
     }
 
     private var status: String {
-        guard model.config.selectedDevice != nil else { return "请在配置中选择设备" }
-        guard model.connected else { return "设备离线" }
-        guard model.canReadKeys else { return "已连接 · 未监听" }
-        if model.isDiagnosing { return "诊断中 · 动作暂停" }
-        return model.isEnabled ? "已连接" : "已连接 · 已暂停"
+        model.connectionStatus
     }
 
     private func help(for key: RemoteKey) -> String {
         guard let action = model.profile?.actions[key.id] else { return key.name }
         return [key.name, action.title, action.detail].compactMap { $0 }.joined(separator: " · ")
+    }
+
+}
+
+struct XiaomiArtwork: View {
+    let highlight: (String) -> Color
+    let help: (RemoteKey) -> String
+    let activate: (String) -> Void
+
+    var body: some View {
+        GeometryReader { geometry in
+            // The visible portion omits the transparent bottom margin; hotspot coordinates do not.
+            let visibleHeightFraction: CGFloat = 2107.0 / 2172.0
+            let height = min(geometry.size.height / visibleHeightFraction, geometry.size.width * 3)
+            let width = height / 3
+            ZStack(alignment: .topLeading) {
+                if let image = Self.artwork {
+                    Image(nsImage: image)
+                        .resizable()
+                        .frame(width: width, height: height)
+                        .accessibilityHidden(true)
+                        .allowsHitTesting(false)
+                }
+                ForEach(RemoteKey.xiaomi) { key in
+                    if let hit = Self.hotspots[key.id] {
+                        Button { activate(key.id) } label: {
+                            Ellipse()
+                                .fill(highlight(key.id))
+                                .contentShape(Ellipse())
+                                .frame(width: width * hit.width, height: height * hit.height)
+                        }
+                        .buttonStyle(.plain)
+                        .position(x: width * hit.x, y: height * hit.y)
+                        .accessibilityLabel(key.name)
+                        .help(help(key))
+                    }
+                }
+            }
+            .frame(width: width, height: height)
+            .frame(height: height * visibleHeightFraction, alignment: .top)
+            .clipped()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        }
     }
 
     private static let artwork: NSImage? = {

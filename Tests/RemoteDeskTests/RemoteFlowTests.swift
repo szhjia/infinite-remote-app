@@ -9,7 +9,10 @@ private final class InputFixture: RemoteInputSource {
     var state: InputMonitorState = .permission
     var onDevices: ([DeviceID]) -> Void = { _ in }
     var onMonitorState: (InputMonitorState) -> Void = { _ in }
-    var onPress: (DeviceID, InputCode) -> Void = { _, _ in }
+    var onEvent: (DeviceID, RemoteInputEvent) -> Void = { _, _ in }
+    var onAmbiguousDevices: (Set<DeviceID>) -> Void = { _ in }
+
+    func press(_ device: DeviceID, _ input: InputCode) { onEvent(device, .pressed(input)) }
     var selectedDevice: DeviceID?
 
     init(devices: [DeviceID]) {
@@ -65,32 +68,38 @@ func upgradesOldCodexPresetWithoutChangingLearnedKeysOrCustomizedActions(customi
     old.version = 1
     old.selectDevice(device)
     old.updateRemote { $0.learn(enter, as: "ok") }
-    let codexIndex = try #require(old.agents.firstIndex { $0.id == "codex" })
-    old.agents[codexIndex].actions = [
-        "ok": customized ? .nextAgent : .openApp, "menu": .nextAgent, "key1": .openApp
+    let custom = KeyboardShortcut(keyCode: 0, modifiers: [.command, .shift], keyName: "A")
+    old.activeAgentID = "chatgpt"
+    old.agents = [
+        .init(id: "chatgpt", name: "ChatGPT", target: .init(bundleID: "com.openai.chat"),
+              actions: ["ok": .openLink("https://chatgpt.com/")]),
+        .init(id: "codex", name: "Codex", target: .init(bundleID: "com.openai.codex"),
+              actions: ["ok": customized ? .shortcut(custom) : .openApp, "menu": .nextAgent, "key1": .openApp])
     ]
-    try JSONEncoder().encode(old).write(to: storeURL)
+    let original = try JSONEncoder().encode(old)
+    try original.write(to: storeURL)
 
     let model = RemoteModel(hid: InputFixture(devices: [device]), storeURL: storeURL, runAction: { _, _ in })
     let saved = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: storeURL))
     #expect(saved == model.config)
     #expect(saved.version == Configuration.currentVersion)
-    #expect(saved.activeAgentID == old.activeAgentID)
+    #expect(saved.activeAgentID == "codex")
     #expect(saved.remotes == old.remotes)
-    #expect(saved.agents.filter { $0.id != "codex" } == old.agents.filter { $0.id != "codex" })
+    #expect(saved.agents.count == 1)
+    #expect(try Data(contentsOf: storeURL.appendingPathExtension("v1.backup")) == original)
 
-    let codex = saved.agents[codexIndex]
-    if customized {
-        #expect(codex == old.agents[codexIndex])
-    } else {
-        #expect(codex.actions["home"] == .shortcut(.init(keyCode: 45, modifiers: [.command], keyName: "N")))
-        #expect(codex.actions["ok"] == .shortcut(.init(keyCode: 36, modifiers: [.command], keyName: "Return")))
-        #expect(codex.actions["back"] == .shortcut(.init(keyCode: 53, modifiers: [], keyName: "Esc")))
-    }
+    let codex = try #require(saved.activeAgent)
+    #expect(codex.name == "ChatGPT")
+    #expect(codex.actions["menu"] == .appleMenu)
+    #expect(codex.actions["power"] == .displaySleep)
+    #expect(codex.actions["voice"] == .dictation)
+    #expect(codex.actions["ok"] == .shortcut(customized ? custom : AgentProfile.sendDraft))
+    #expect(codex.actions["home"] == (customized ? nil : .shortcut(AgentProfile.newChat)))
+    #expect(codex.actions["back"] == (customized ? nil : .shortcut(AgentProfile.stop)))
 }
 
 @Test @MainActor
-func selectedRemoteLearnsOnceAndRunsTheCurrentAgentActionAfterRestart() async throws {
+func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws {
     let xiaomi = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米蓝牙语音遥控器")
     let other = DeviceID(vendor: 1, product: 2, name: "另一个遥控器")
     // IOKit reports this remote's keyboard array usage in the value field.
@@ -110,23 +119,29 @@ func selectedRemoteLearnsOnceAndRunsTheCurrentAgentActionAfterRestart() async th
     model.selectDevice(xiaomi)
     #expect(model.connected)
     #expect(input.selectedDevice == xiaomi)
-    #expect(model.layout == .xiaomi2Pro)
+    #expect(model.devices == [xiaomi])
     model.startLearning()
     #expect(model.learning == nil)
 
     input.state = .listening
     model.refreshPermissions()
     model.startLearning()
-    input.onPress(other, enter)
+    input.press(other, enter)
     #expect(model.learning == "ok")
-    input.onPress(xiaomi, enter)
+    input.press(xiaomi, enter)
     #expect(model.learning == nil)
     #expect(model.learnedCount == 1)
     #expect(!model.isRunning)
 
     let customShortcut = RemoteCore.KeyboardShortcut(keyCode: 45, modifiers: [.command], keyName: "N")
-    model.selectAgent("codex")
-    model.setAction(.shortcut(customShortcut), for: "ok", in: "codex")
+    model.setAction(.shortcut(customShortcut), for: "ok")
+    #expect(model.hasConfigurationChanges)
+    #expect(model.profile?.actions["ok"] == .shortcut(AgentProfile.sendDraft))
+    #expect(model.config.activeRemote?.input(for: "ok") == nil)
+    model.pressVirtualKey("ok")
+    #expect(!model.isRunning)
+    model.saveConfigurationChanges()
+    #expect(!model.hasConfigurationChanges)
 
     let reopenedInput = InputFixture(devices: [xiaomi, other])
     let reopened = RemoteModel(hid: reopenedInput, storeURL: storeURL, runAction: runAction)
@@ -134,27 +149,25 @@ func selectedRemoteLearnsOnceAndRunsTheCurrentAgentActionAfterRestart() async th
     #expect(reopened.learnedCount == 1)
 
     reopened.refreshPermissions()
-    reopenedInput.onPress(xiaomi, enter)
+    reopenedInput.press(xiaomi, enter)
     #expect(!reopened.isRunning)
 
     reopenedInput.state = .listening
     reopened.refreshPermissions()
     reopened.isEnabled = false
-    reopenedInput.onPress(xiaomi, enter)
+    reopenedInput.press(xiaomi, enter)
     #expect(!reopened.isRunning)
 
     reopened.isEnabled = true
-    reopenedInput.onPress(xiaomi, enter)
+    reopenedInput.press(xiaomi, enter)
     try await waitForAction(on: reopened)
     try #require(dispatched.count == 1)
     #expect(dispatched[0].0 == .shortcut(customShortcut))
     #expect(dispatched[0].1?.bundleID == "com.openai.codex")
 
-    reopened.selectAgent("chatgpt")
-    reopenedInput.onPress(xiaomi, enter)
-    try await waitForAction(on: reopened)
-    try #require(dispatched.count == 2)
-    #expect(dispatched[1].0 == .openLink("https://chatgpt.com/"))
+    reopenedInput.press(other, enter)
+    #expect(!reopened.isRunning)
+    #expect(dispatched.count == 1)
 }
 
 @MainActor
@@ -177,10 +190,6 @@ func liveRemoteOnlyUsesArtworkForTheSelectedOnlineXiaomi() {
     let input = InputFixture(devices: [xiaomi, other])
     let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
     model.refreshPermissions()
-    #expect(model.connectedDevice == nil)
-    #expect(!model.showsXiaomiArtwork)
-
-    model.selectDevice(xiaomi)
     #expect(model.connectedDevice == xiaomi)
     #expect(model.showsXiaomiArtwork)
     #expect(!model.canReadKeys)
@@ -189,8 +198,7 @@ func liveRemoteOnlyUsesArtworkForTheSelectedOnlineXiaomi() {
     #expect(!model.showsXiaomiArtwork)
 
     model.selectDevice(other)
-    model.selectLayout(.xiaomi2Pro)
-    #expect(model.connectedDevice == other)
+    #expect(model.connectedDevice == nil)
     #expect(!model.showsXiaomiArtwork)
 }
 
@@ -212,8 +220,9 @@ func diagnosticsSuspendHardwareAndVirtualActionsUntilClosed() async throws {
     model.pressVirtualKey("ok")
     #expect(!model.isRunning)
     model.startLearning()
-    input.onPress(device, enter)
+    input.press(device, enter)
     #expect(model.learnedCount == 1)
+    model.saveConfigurationChanges()
 
     model.startLearning()
     model.setDiagnosing(true)
@@ -221,9 +230,8 @@ func diagnosticsSuspendHardwareAndVirtualActionsUntilClosed() async throws {
     model.startLearning()
     #expect(model.learning == nil)
     let count = model.activity.count
-    input.onPress(device, enter)
+    input.press(device, enter)
     model.pressVirtualKey("ok")
-    model.testAction(.openApp)
     #expect(model.activity.count == count + 1)
     #expect(!model.isRunning)
     #expect(dispatched.isEmpty)
@@ -235,8 +243,191 @@ func diagnosticsSuspendHardwareAndVirtualActionsUntilClosed() async throws {
     model.isEnabled = true
     model.pressVirtualKey("ok")
     try await waitForAction(on: model)
-    #expect(dispatched == [.openLink("https://chatgpt.com/")])
+    #expect(dispatched == [.shortcut(AgentProfile.sendDraft)])
     input.onDevices([])
     model.pressVirtualKey("ok")
     #expect(!model.isRunning)
+}
+
+@MainActor
+private final class DictationFixture: DictationSession {
+    var starts = 0
+    var stops = 0
+    var sends = 0
+    var cancellations = 0
+    var resultReady = false
+    var contextChanged = false
+
+    func begin() -> any DictationSession {
+        starts += 1
+        return self
+    }
+
+    func isRecording() throws -> Bool {
+        if contextChanged { throw DictationFailure.contextChanged }
+        return true
+    }
+
+    func stop() throws {
+        if contextChanged { throw DictationFailure.contextChanged }
+        stops += 1
+    }
+
+    func submitTranscriptIfReady() throws -> DictationSubmission {
+        if contextChanged { throw DictationFailure.contextChanged }
+        guard resultReady else { return .waitingForTranscript }
+        if sends == 0 {
+            sends += 1
+            return .awaitingConfirmation
+        }
+        return .confirmed
+    }
+
+    func cancel() { cancellations += 1 }
+}
+
+@Test @MainActor
+func voiceShortPressDoesNotRecordAndPhysicalReleaseSubmitsOnlyOnce() async throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let code = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 5, report: 1, value: 1)
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let driver = DictationFixture()
+    let dictation = DictationController(holdDelay: .milliseconds(15), begin: driver.begin)
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                            dictation: dictation, runAction: { _, _ in })
+    model.refreshPermissions()
+    model.selectSlot("voice")
+    model.startLearning()
+    input.onEvent(device, .pressed(code))
+    input.onEvent(device, .released(code))
+    model.saveConfigurationChanges()
+
+    input.onEvent(device, .pressed(code))
+    #expect(model.hardwarePress?.key == "voice")
+    #expect(model.hardwarePress?.phase == .down)
+    input.onEvent(device, .released(code))
+    #expect(model.hardwarePress?.phase == .shortPress)
+    #expect(dictation.phase == .idle)
+    #expect(driver.starts == 0)
+
+    let origin = RemoteInputOrigin(endpoint: 11, cookie: 2)
+    input.onEvent(device, .pressed(code, origin: origin))
+    input.onEvent(device, .pressed(code, origin: origin))
+    try await waitUntil { dictation.phase == .recording && model.hardwarePress?.phase == .holding }
+    #expect(driver.starts == 1)
+    input.onEvent(device, .released(code, origin: .init(endpoint: 12, cookie: 2)))
+    #expect(dictation.phase == .recording)
+    #expect(model.hardwarePress?.phase == .holding)
+    input.onEvent(device, .released(code, origin: origin))
+    input.onEvent(device, .released(code, origin: origin))
+    #expect(dictation.phase == .transcribing)
+    #expect(model.hardwarePress?.phase == .longPress)
+    #expect(driver.sends == 0)
+    driver.resultReady = true
+    try await waitUntil { dictation.phase == .sent }
+    #expect(driver.stops == 1)
+    #expect(driver.sends == 1)
+    #expect(model.activity.contains { $0.text.hasPrefix("松开 · 语音") })
+}
+
+@Test(arguments: [true, false]) @MainActor
+func xiaomiKeyboardF5ShowsLongPressWithoutStartingOrSubmittingAXDictation(_ arrayReport: Bool) async throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let code = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                         usage: arrayReport ? Int(UInt32.max) : 0x3E,
+                         report: 1, value: arrayReport ? 0x3E : 1)
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let driver = DictationFixture()
+    let dictation = DictationController(holdDelay: .milliseconds(15), begin: driver.begin)
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                            dictation: dictation, runAction: { _, _ in })
+    model.refreshPermissions()
+    model.selectSlot("voice")
+    model.startLearning()
+    input.onEvent(device, .pressed(code))
+    input.onEvent(device, .released(code))
+    model.saveConfigurationChanges()
+
+    input.onEvent(device, .pressed(code))
+    try await waitUntil { model.hardwarePress?.phase == .holding }
+    input.onEvent(device, .released(code))
+
+    #expect(model.hardwarePress?.phase == .longPress)
+    #expect(dictation.phase == .idle)
+    #expect(driver.starts == 0)
+    #expect(driver.sends == 0)
+}
+
+@Test(arguments: ["disconnect", "pause", "context", "permission", "ambiguity", "endpoint"]) @MainActor
+func dictationNeverSubmitsAfterAnInterruption(_ interruption: String) async throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let code = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 5, report: 1, value: 1)
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let driver = DictationFixture()
+    let dictation = DictationController(holdDelay: .zero, begin: driver.begin)
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                            dictation: dictation, runAction: { _, _ in })
+    model.refreshPermissions()
+    model.selectSlot("voice")
+    model.startLearning()
+    input.onEvent(device, .pressed(code))
+    input.onEvent(device, .released(code))
+    model.saveConfigurationChanges()
+    let origin = RemoteInputOrigin(endpoint: 19, cookie: 1)
+    input.onEvent(device, .pressed(code, origin: origin))
+    try await waitUntil { dictation.phase == .recording }
+    input.onEvent(device, .released(code, origin: origin))
+    #expect(dictation.phase == .transcribing)
+
+    switch interruption {
+    case "disconnect": input.onDevices([])
+    case "pause": model.isEnabled = false
+    case "context": driver.contextChanged = true
+    case "permission": input.onMonitorState(.permission)
+    case "ambiguity": input.onAmbiguousDevices([device])
+    case "endpoint": input.onEvent(device, .endpointClosed(19))
+    default: Issue.record("Unexpected interruption")
+    }
+    driver.resultReady = true
+    try await waitUntil { !dictation.phase.active }
+    #expect(driver.sends == 0)
+    #expect(driver.cancellations == 1)
+}
+
+@Test @MainActor
+func dictationRefusesAnExistingDraftBeforeOpeningSession() async throws {
+    let dictation = DictationController(holdDelay: .zero, begin: { throw DictationFailure.draft })
+    dictation.press()
+    try await waitUntil { !dictation.phase.active }
+    #expect(dictation.phase == .failed(DictationFailure.draft.localizedDescription))
+    dictation.release()
+    #expect(dictation.phase != .sent)
+}
+
+@Test @MainActor
+func systemShortcutRequiresTheSameEnabledCombination() throws {
+    let original = SystemHotKey(keyCode: 120, flags: 262144)
+    let rebound = SystemHotKey(keyCode: 120, flags: 524288)
+    try SystemActions.validate(original, enabled: [original])
+    #expect(throws: SystemActions.Failure.shortcutChanged) { try SystemActions.validate(original, enabled: [rebound]) }
+    #expect(throws: SystemActions.Failure.shortcutChanged) { try SystemActions.validate(original, enabled: []) }
+}
+
+@MainActor
+private func waitUntil(_ condition: () -> Bool) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(2))
+    while !condition() && clock.now < deadline {
+        try await clock.sleep(for: .milliseconds(5))
+    }
+    try #require(condition())
 }

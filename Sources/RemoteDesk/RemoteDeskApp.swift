@@ -22,7 +22,7 @@ struct RemoteDeskApp: App {
             ("BridgePaused", "遥控台 · 已暂停")
         } else if !model.canReadKeys {
             ("BridgeIdle", "遥控台 · 未监听")
-        } else if model.isDiagnosing || model.isEditing || model.learning != nil {
+        } else if model.isDiagnosing || model.learning != nil {
             ("BridgePaused", "遥控台 · 暂停触发")
         } else {
             ("BridgeListening", "遥控台 · 正在监听")
@@ -41,18 +41,8 @@ private struct TrayMenu: View {
         ))
         Toggle("响应遥控器", isOn: $model.isEnabled)
         Divider()
-        Menu("切换 Agent · \(model.profile?.name ?? "未选择")") {
-            ForEach(model.config.agents) { profile in
-                Button {
-                    model.selectAgent(profile.id)
-                } label: {
-                    if model.profile?.id == profile.id {
-                        Label(profile.name, systemImage: "checkmark")
-                    } else {
-                        Text(profile.name)
-                    }
-                }
-            }
+        if let dictationStatus = model.dictation.phase.message {
+            Text(dictationStatus)
         }
         Button("打开配置…") { windows.showConfiguration() }
         Button {
@@ -70,11 +60,13 @@ private struct TrayMenu: View {
 }
 
 @MainActor @Observable
-final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NSToolbarDelegate {
     let model = RemoteModel()
     private(set) var isRemoteVisible = false
     private var remote: NSWindow?
     private var configuration: NSWindow?
+    private static let connectionItem = NSToolbarItem.Identifier("connection")
+    private static let responseItem = NSToolbarItem.Identifier("response")
     private var diagnostics: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -156,8 +148,17 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func showConfiguration() {
         if configuration == nil {
-            configuration = titledWindow("遥控台 · 配置", size: NSSize(width: 1020, height: 720),
-                                         content: Workspace(model: model).frame(minWidth: 890, minHeight: 640))
+            let window = titledWindow("遥控台 · 配置", size: NSSize(width: 1020, height: 720),
+                                      content: Workspace(model: model))
+            let toolbar = NSToolbar(identifier: "RemoteDesk.Configuration")
+            toolbar.delegate = self
+            toolbar.allowsUserCustomization = false
+            toolbar.displayMode = .iconOnly
+            window.toolbar = toolbar
+            window.toolbarStyle = .unifiedCompact
+            window.titleVisibility = .hidden
+            window.contentMinSize = NSSize(width: 850, height: 600)
+            configuration = window
         }
         present(configuration)
     }
@@ -181,9 +182,37 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if notification.object as? NSWindow === configuration {
             model.cancelLearning()
-            model.isEditing = false
             configuration = nil
         }
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, Self.connectionItem, Self.responseItem]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        if identifier == Self.connectionItem {
+            item.label = "连接状态"
+            item.isBordered = false
+            item.view = NSHostingView(rootView: ConfigurationConnectionStatus(model: model))
+        } else if identifier == Self.responseItem {
+            item.label = "响应遥控器"
+            if #available(macOS 26.0, *) {
+                item.isBordered = false
+            } else {
+                item.isBordered = true
+            }
+            item.view = NSHostingView(rootView: ConfigurationResponseSwitch(model: model))
+        } else {
+            return nil
+        }
+        return item
     }
 
     private func titledWindow<Content: View>(_ title: String, size: NSSize, content: Content) -> NSWindow {

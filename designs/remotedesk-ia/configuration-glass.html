@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>遥控台 · 配置原型</title>
+<style>
+:root{color-scheme:light dark;font:13px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;--base:#f5f6fa;--side:#edf0f6;--list:#fff;--ink:#202330;--muted:#666d7c;--line:#777b9228;--accent:#5048c6;--selected:#6255df17;--green:#22844b}
+@media(prefers-color-scheme:dark){:root{--base:#22242b;--side:#2a2c35;--list:#292b32;--ink:#f4f4fa;--muted:#b4b7c6;--line:#b7bbd029;--accent:#bcb5ff;--selected:#9083f42a;--green:#73d19a}}
+*{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-content:center;gap:12px;padding:16px;background:radial-gradient(ellipse at 28% 15%,#d9d7f3,transparent 65%),linear-gradient(135deg,#acb2c6,#e5e8ef);color:var(--ink)}
+@media(prefers-color-scheme:dark){body{background:radial-gradient(ellipse at 28% 15%,#3d365a,transparent 65%),#181921}}
+button,select{font:inherit;color:inherit}button,select,summary{cursor:pointer}button:disabled{opacity:.55;cursor:default}button:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.window{width:min(1040px,calc(100vw - 32px));height:min(710px,calc(100dvh - 86px));min-height:500px;display:grid;grid-template-rows:53px minmax(0,1fr);border-radius:19px;overflow:hidden;background:var(--base);border:1px solid var(--line);box-shadow:0 22px 90px #11132a32}
+.window[data-size=minimum]{width:min(850px,calc(100vw - 32px));height:600px}
+.bar{display:flex;align-items:center;justify-content:space-between;padding:0 17px;background:var(--side);border-bottom:1px solid var(--line)}
+.lights,.bar-right,.connection,.glass{display:flex;align-items:center;gap:8px}.lights i{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 1px #2222}.lights i:nth-child(1){background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.bar-right{gap:16px}.connection{color:var(--muted);font-size:12px}.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}.dot.on{background:var(--green)}
+.glass{border:1px solid #fff5;border-radius:20px;padding:5px 8px 5px 11px;background:linear-gradient(170deg,#ffffff30,#ffffff05);box-shadow:inset 0 1px #fff5,0 2px 5px #12132220}
+.track{width:32px;height:18px;border-radius:12px;background:#6c7080;position:relative}.glass[aria-checked=true] .track{background:#7062de}.track:after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:linear-gradient(#fff,#dedcf2);box-shadow:0 1px 4px #2225;transition:transform .15s}.glass[aria-checked=true] .track:after{transform:translateX(14px)}
+.columns{display:grid;grid-template-columns:minmax(148px,19%) minmax(190px,34%) minmax(260px,1fr);min-height:0}.sidebar,.stage,.mapping{min-width:0;min-height:0}.sidebar{display:flex;flex-direction:column;padding:18px 13px;background:var(--side);border-right:1px solid var(--line);gap:13px}
+.client{display:flex;align-items:center;gap:9px;padding:10px;border-radius:9px;background:var(--selected);font-weight:650;color:var(--accent)}.client svg,.key-icon svg{width:17px;height:17px;flex:none}
+.sub{color:var(--muted);font-size:12px;line-height:1.55;margin:0 4px}.access{margin-top:auto;display:grid;gap:8px}.link{color:var(--accent);border:0;padding:0;background:none;text-align:left}
+.stage{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:14px 10px 24px;background:radial-gradient(ellipse at 50% 44%,var(--selected),transparent 72%),var(--base);border-right:1px solid var(--line)}
+.device{position:relative;flex:none;height:clamp(285px,calc(100dvh - 250px),510px);max-height:calc(100% - 76px);aspect-ratio:1/3}.window[data-size=minimum] .device{height:415px}.device img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 15px 15px #1617263d)}
+.hotspot{position:absolute;transform:translate(-50%,-50%);border-radius:50%;border:0;background:none;padding:0}.hotspot[aria-pressed=true],.hotspot:hover{background:#a097ff5e;box-shadow:inset 0 0 0 1px #c5bdff}
+.device-name{text-align:center;display:grid;gap:6px}.device-name small{color:var(--muted);font-size:11px}
+.mapping{background:var(--list);display:grid;grid-template-rows:minmax(0,1fr) auto}.rows{overflow:auto;scrollbar-gutter:stable;padding:6px 14px}
+.row{border-bottom:1px solid var(--line);min-height:40px}.row:last-child{border-bottom:0}.row[data-selected=true] .key,.row[data-selected=true] .key-icon{color:var(--accent);font-weight:700}
+.row-main{display:grid;grid-template-columns:minmax(72px,1fr) minmax(106px,1.5fr);align-items:center;gap:10px;padding:5px 8px}
+.key{border:0;background:none;text-align:left;padding:4px 0;display:flex;align-items:center;gap:8px}.key-icon{display:grid;place-content:center;width:22px;flex:none;color:var(--muted)}.key-icon svg{width:15px;height:15px}
+select,.soft{border:1px solid var(--line);border-radius:7px;background:var(--base);padding:4px 6px;min-width:0}.row select{width:100%}.access[hidden],.footer [hidden]{display:none}
+.footer{border-top:1px solid var(--line);background:var(--list);padding:10px 13px;display:grid;gap:6px}
+.footer-controls{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.footer-controls strong{color:var(--accent);display:inline-flex;align-items:center;gap:6px}.footer-controls strong svg{width:15px;height:15px}.footer-controls .space{flex:1}
+.footer .save{background:var(--accent);color:var(--list);font-weight:650}.footer .save:disabled{background:var(--base);color:var(--muted)}
+.footer-more{position:relative}.footer-more summary{list-style:none}.footer-more-panel{position:absolute;z-index:2;right:0;bottom:calc(100% + 5px);display:grid;gap:5px;padding:6px;background:var(--base);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px #0002;white-space:nowrap}.footer-more-panel button{text-align:left;padding:3px 4px}
+.footer-note{min-height:15px;color:var(--muted);font-size:11px}.footer select{max-width:180px}
+.demo{display:flex;gap:8px;align-items:center;justify-content:flex-end;color:#343445}.demo label{font-size:11px}.demo .soft{color:var(--ink)}#demo-state{min-width:0;max-width:100%}
+@media(prefers-color-scheme:dark){.demo{color:var(--muted)}}
+@media(max-width:680px){body{display:block;padding:0}.window{width:100%;height:calc(100dvh - 40px);border-radius:0}.columns{grid-template-columns:128px minmax(115px,1fr) minmax(220px,1.6fr);overflow:auto}.sidebar{padding:12px 8px}.rows{padding:6px}.demo{padding:6px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important}}
+</style>
+<main class="window" aria-label="遥控台配置原型">
+  <header class="bar">
+    <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="bar-right">
+      <span class="connection" role="status"><i class="dot" id="status-dot"></i><span id="connection"></span></span>
+      <button class="glass" id="response" role="switch" aria-checked="true"><span>响应遥控器</span><i class="track" aria-hidden="true"></i></button>
+    </div>
+  </header>
+  <div class="columns">
+    <aside class="sidebar" aria-label="桌面客户端">
+      <div class="client"><span id="client-icon" aria-hidden="true"></span>ChatGPT</div>
+      <p class="sub">桌面端 Codex</p>
+      <div class="access" id="access" hidden><p class="sub" id="permission-text"></p><button class="link" id="permission-button"></button></div>
+    </aside>
+    <section class="stage" aria-label="遥控器">
+      <div class="device" id="device"><img src="assets/remote-2-pro.png" alt="小米蓝牙遥控器 2 Pro 正面" draggable="false"></div>
+      <div class="device-name"><strong>小米蓝牙遥控器 2 Pro</strong><small id="device-note"></small><button class="link" id="bluetooth" hidden>打开蓝牙设置</button></div>
+    </section>
+    <section class="mapping" aria-label="实体按键与功能">
+      <div class="rows" id="mapping"></div>
+      <div class="footer">
+        <div class="footer-note" id="notice" role="status"></div>
+        <div class="footer-controls">
+          <strong><span id="selected-icon" aria-hidden="true"></span><span id="selected-key"></span></strong>
+          <button class="soft" id="learn"></button>
+          <button class="soft" id="signal" hidden>模拟按下实体键</button>
+          <select class="system" id="system" aria-label="系统快捷键（演示）" hidden><option value="">选择系统快捷键</option><option>⌃F2</option><option>⇧⌘5</option></select>
+          <span class="space"></span>
+          <details class="footer-more" id="more" hidden>
+            <summary class="soft" aria-label="更多操作">···</summary>
+            <div class="footer-more-panel">
+              <button class="link" id="discard" hidden>撤销未保存的更改</button>
+            </div>
+          </details>
+          <button class="soft save" id="save">保存</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="demo">
+  <label for="demo-size">窗口</label>
+  <select class="soft" id="demo-size"><option value="default">默认尺寸</option><option value="minimum">最小尺寸</option></select>
+  <label for="demo-state">原型演示</label>
+  <select class="soft" id="demo-state">
+    <option value="online">正常连接</option><option value="offline">未连接</option><option value="permission">缺少输入监控</option>
+    <option value="accessibility">缺少辅助功能</option><option value="voice">听写不可用</option><option value="shortcut">快捷键不可用</option>
+  </select>
+</div>
+<script>
+// Icons by Lucide contributors, ISC license. https://lucide.dev/license
+window.REMOTE_ICONS = {"message-circle": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719\" />\n</svg>", "power": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M12 2v10\" />\n  <path d=\"M18.4 6.6a9 9 0 1 1-12.77.04\" />\n</svg>", "mic": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M12 19v3\" />\n  <path d=\"M19 10v2a7 7 0 0 1-14 0v-2\" />\n  <rect x=\"9\" y=\"2\" width=\"6\" height=\"13\" rx=\"3\" />\n</svg>", "chevron-up": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"m18 15-6-6-6 6\" />\n</svg>", "chevron-left": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"m15 18-6-6 6-6\" />\n</svg>", "circle-dot": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <circle cx=\"12\" cy=\"12\" r=\"1\" />\n  <circle cx=\"12\" cy=\"12\" r=\"10\" />\n</svg>", "chevron-right": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"m9 18 6-6-6-6\" />\n</svg>", "chevron-down": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"m6 9 6 6 6-6\" />\n</svg>", "corner-up-left": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M20 20v-7a4 4 0 0 0-4-4H4\" />\n  <path d=\"M9 14 4 9l5-5\" />\n</svg>", "plus": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M5 12h14\" />\n  <path d=\"M12 5v14\" />\n</svg>", "house": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" />\n  <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />\n</svg>", "minus": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M5 12h14\" />\n</svg>", "menu": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M4 5h16\" />\n  <path d=\"M4 12h16\" />\n  <path d=\"M4 19h16\" />\n</svg>", "tv": "<svg aria-hidden=\"true\" focusable=\"false\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"m17 2-5 5-5-5\" />\n  <rect width=\"20\" height=\"15\" x=\"2\" y=\"7\" rx=\"2\" />\n</svg>"};
+const keys = [
+  ['power','电源','power',31.5,11.5,16.6,5.5], ['voice','语音','mic',68.5,11.5,16.6,5.5],
+  ['up','方向上','chevron-up',50,19.2,34,4.9], ['left','方向左','chevron-left',27.4,26.5,14.1,11.2],
+  ['ok','确定','circle-dot',50,26.7,31.1,10.5], ['right','方向右','chevron-right',72.6,26.5,14.1,11.2],
+  ['down','方向下','chevron-down',50,34.1,34,4.9], ['back','返回','corner-up-left',34.8,41.5,23.5,7.8],
+  ['plus','音量加','plus',65,41.5,23.5,7.8], ['home','主页','house',34.8,50.5,23.5,7.8],
+  ['minus','音量减','minus',65,50.5,23.5,7.8], ['menu','菜单','menu',34.8,59.6,23.5,7.8],
+  ['tv','直播','tv',65,59.6,23.5,7.8]
+];
+const icons = window.REMOTE_ICONS;
+const icon = name => icons?.[name] || '';
+const options = [['none','不分配动作'],['open','打开 ChatGPT'],['new','新建对话 · ⌘N'],['send','发送当前草稿 · ⌘↵'],['stop','停止生成 · Esc'],['dictation','Codex 听写'],['display','关闭显示器'],['apple','打开苹果菜单'],['system','macOS 快捷键…']];
+let actions = {power:'display',voice:'dictation',ok:'send',back:'stop',home:'new',menu:'apple'};
+let learned = new Set(['ok','voice','home','back','menu']);
+let savedActions = {...actions}, savedLearned = new Set(learned), systemKeys = {}, savedSystemKeys = {};
+const $ = id => document.getElementById(id);
+let selected = 'ok', mode = 'online', enabled = true, learning = '';
+const note = text => { $('notice').textContent = text; };
+const dirty = () => keys.some(([id]) => (actions[id]||'none') !== (savedActions[id]||'none') ||
+  learned.has(id)!==savedLearned.has(id) || (systemKeys[id]||'') !== (savedSystemKeys[id]||''));
+const canInput = () => enabled && !['offline','permission'].includes(mode);
+const canVoice = () => canInput() && !['voice','accessibility'].includes(mode);
+$('client-icon').innerHTML = icon('message-circle');
+for (const [id,name,symbol,x,y,w,h] of keys) {
+  const hit = document.createElement('button');
+  hit.className = 'hotspot';
+  hit.id = 'hit-'+id;
+  hit.style.cssText = `left:${x}%;top:${y}%;width:${w}%;height:${h}%`;
+  hit.setAttribute('aria-label',name+' · 定位');
+  hit.onclick = () => choose(id,true);
+  $('device').append(hit);
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.id = 'row-'+id;
+  row.innerHTML = `<div class="row-main"><button class="key"><span class="key-icon" aria-hidden="true">${icon(symbol)}</span>${name}</button>
+    <select aria-label="${name}的功能">${options.map(([v,t])=>`<option value="${v}">${t}</option>`).join('')}</select></div>`;
+  $('mapping').append(row);
+  row.querySelector('.key').onclick = () => choose(id);
+  const select = row.querySelector('select');
+  select.value = actions[id] || 'none';
+  select.onfocus = () => choose(id);
+  select.onchange = () => {
+    actions[id] = select.value;
+    if (select.value !== 'system') delete systemKeys[id];
+    choose(id);
+  };
+}
+function choose(id, scroll=false) {
+  if (selected !== id) { learning = ''; selected = id; }
+  refresh();
+  if (scroll) $('row-'+id).scrollIntoView({block:'nearest'});
+}
+function refresh() {
+  $('response').setAttribute('aria-checked',enabled);
+  $('status-dot').classList.toggle('on',mode!=='offline'&&mode!=='permission');
+  $('connection').textContent = mode==='offline'?'未连接':mode==='permission'?'已连接 · 未监听':enabled?'已连接':'已连接 · 已暂停';
+  $('bluetooth').hidden = mode!=='offline';
+  $('device-note').textContent = mode==='offline'?'请在 macOS 中配对':learned.size+' / 13 已录入';
+  $('access').hidden = !['permission','accessibility'].includes(mode);
+  $('permission-text').textContent = mode==='permission'?'开启输入监控后，遥控台才能读取按键。':'ChatGPT 和菜单动作需要辅助功能权限。';
+  $('permission-button').textContent = mode==='permission'?'打开输入监控设置':'打开辅助功能设置';
+  const currentAction = actions[selected];
+  const [, name, symbol] = keys.find(([id])=>id===selected);
+  $('selected-key').textContent = name;
+  $('selected-icon').innerHTML = icon(symbol);
+  for (const [id] of keys) {
+    const active = id===selected, row = $('row-'+id);
+    $('hit-'+id).setAttribute('aria-pressed',active);
+    row.dataset.selected = active;
+    row.querySelector('.key').setAttribute('aria-pressed',active);
+    row.querySelector('select').value = actions[id] || 'none';
+  }
+  $('learn').hidden = !learning && learned.has(selected);
+  $('learn').disabled = !canInput();
+  $('learn').textContent = learning ? '取消录入' : '录入';
+  $('signal').hidden = !learning;
+  $('system').hidden = currentAction!=='system' || mode==='shortcut';
+  $('system').value = systemKeys[selected] || '';
+  $('discard').hidden = !dirty();
+  $('more').hidden = !!learning || !dirty();
+  if ($('more').hidden) $('more').open = false;
+  $('save').disabled = !dirty() || !!learning || keys.some(([id])=>actions[id]==='system'&&!systemKeys[id]);
+  const voiceHint = !canVoice() ? '听写暂不可用。' : !learned.has(selected) ? '先录入遥控器上的实体键。' :
+    (selected==='voice'
+      ? '在 ChatGPT 中将听写快捷键设为 F5，解除点按听写的回车绑定。按住麦克风键说话，松开后转写，按「确定」发送。'
+      : '在 Codex 对话中，按住遥控器的「'+name+'」键说话，松开后发送。');
+  note(learning?'请按一下遥控器上的键':currentAction==='system'&&mode==='shortcut'?'暂时无法读取 · 请检查系统设置':
+    dirty()?'有未保存的更改。':currentAction==='dictation'?voiceHint:'');
+}
+$('learn').onclick = () => { learning = learning ? '' : selected; refresh(); };
+$('signal').onclick = () => { learned.add(learning); learning = ''; refresh(); note('已收到模拟信号，保存后生效。'); };
+$('system').onchange = event => { systemKeys[selected]=event.target.value; refresh(); };
+$('save').onclick = () => {
+  savedActions = {...actions}; savedLearned = new Set(learned); savedSystemKeys = {...systemKeys};
+  refresh(); note('配置已保存（演示）');
+};
+$('discard').onclick = () => {
+  $('more').open = false;
+  actions = {...savedActions}; learned = new Set(savedLearned); systemKeys = {...savedSystemKeys}; learning = '';
+  refresh();
+};
+$('response').onclick = () => { enabled=!enabled; learning=''; refresh(); };
+$('demo-size').onchange = event => { document.querySelector('.window').dataset.size=event.target.value; };
+$('demo-state').onchange = event => { mode=event.target.value; learning=''; refresh(); };
+$('permission-button').onclick = () => { $('demo-state').value='online'; mode='online'; refresh(); };
+$('bluetooth').onclick = () => { $('demo-state').value='online'; mode='online'; refresh(); };
+refresh();
+</script>
+</html>

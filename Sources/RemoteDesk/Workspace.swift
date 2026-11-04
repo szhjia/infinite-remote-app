@@ -2,315 +2,385 @@ import AppKit
 import RemoteCore
 import SwiftUI
 
-private let accent = Color(red: 0.35, green: 0.39, blue: 0.98)
-
 struct Workspace: View {
-    @Bindable var model: RemoteModel
-    @State private var editor: Editor?
+    let model: RemoteModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var systemPickerSlot: String?
+    @State private var hotKeys: [SystemHotKey]?
+    @State private var hotKeysError: String?
 
-    private enum Editor: Identifiable {
-        case profile(AgentProfile, isNew: Bool)
-        case action(AgentProfile, RemoteKey)
-        var id: String {
-            switch self {
-            case let .profile(profile, _): "profile-\(profile.id)"
-            case let .action(profile, key): "action-\(profile.id)-\(key.id)"
-            }
-        }
-    }
-
-    private var key: RemoteKey {
-        let keys = RemoteKey.keys(for: model.layout)
-        return keys.first { $0.id == model.slot } ?? keys[0]
-    }
+    private let accent = Color.accentColor
 
     var body: some View {
-        VStack(spacing: 0) {
-            masthead
+        HStack(spacing: 0) {
+            sidebar.frame(width: 192)
             Divider()
-            HStack(spacing: 0) {
-                sidebar.frame(width: 253)
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 19) {
-                        workHeader
-                        HStack(alignment: .top, spacing: 20) {
-                            RemotePanel(model: model).frame(maxWidth: .infinity)
-                            inspector.frame(width: 278)
-                        }
-                    }
-                    .padding(24)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
-            }
+            deviceStage.frame(minWidth: 240, idealWidth: 330, maxWidth: .infinity)
+            Divider()
+            mapping.frame(minWidth: 390, idealWidth: 455, maxWidth: 515)
         }
-        .tint(accent)
-        .sheet(item: $editor, onDismiss: { model.isEditing = false }) { page in
-            switch page {
-            case let .profile(profile, isNew):
-                ProfileEditor(profile: profile, isNew: isNew, canRemove: model.config.agents.count > 1,
-                              save: model.saveProfile, remove: { model.removeProfile(profile.id) })
-            case let .action(profile, key):
-                ActionEditor(key: key, action: profile.actions[key.id], target: profile.target) { action in
-                    model.setAction(action, for: key.id, in: profile.id)
-                }
-            }
-        }
+        .frame(minWidth: 850, minHeight: 600)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onDisappear { model.cancelLearning() }
     }
 
-    private var masthead: some View {
-        HStack(spacing: 12) {
-            Image("BridgeBrand", bundle: .module)
-                .resizable()
-                .frame(width: 48, height: 48)
-                .padding(-4)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("遥控台").font(.system(size: 19, weight: .semibold))
-                Text("REMOTE DESK").font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .tracking(2.4).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Toggle("响应遥控器", isOn: $model.isEnabled)
-                .toggleStyle(.switch).controlSize(.small)
-                .help("暂停时仍可查看按键信号")
-            Divider().frame(height: 24).padding(.horizontal, 3)
-            HStack(spacing: 7) {
-                Circle().fill(model.connected ? Color.green : Color.secondary).frame(width: 7, height: 7)
-                Text(model.connected ? (model.canReadKeys ? "已连接" : "已连接 · 未监听") : "未连接")
-                    .font(.callout.weight(.medium))
-            }
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(.quaternary.opacity(0.55), in: Capsule())
-        }
-        .padding(.horizontal, 23)
-        .padding(.vertical, 13)
-    }
-
     private var sidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 10) {
-                    sectionLabel("设备", icon: "BridgeDevice")
-                    Picker("输入设备", selection: Binding(get: { model.config.selectedDevice }, set: model.selectDevice)) {
-                        Text("选择蓝牙设备").tag(Optional<DeviceID>.none)
-                        if let selected = model.config.selectedDevice, !model.connected {
-                            Text("\(selected.name)（离线）").tag(Optional(selected))
-                        }
-                        ForEach(model.devices, id: \.self) { device in
-                            Text(device.name).tag(Optional(device))
-                        }
-                    }
-                    .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
-                    if let selected = model.config.selectedDevice {
-                        Text("HID  \(selected.modelCode)").font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary)
-                    }
-                    Button("打开蓝牙设置", systemImage: "gearshape") { model.openBluetooth() }
-                        .buttonStyle(.link)
-                    switch model.monitorState {
-                    case .permission:
-                        Text("开启输入监控后，应用才能读取遥控器按键。")
-                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Button("开启输入监控") { model.requestListen() }
-                    case let .failed(code):
-                        Text("无法启动 HID 监听（\(code)）").font(.caption).foregroundStyle(.red)
-                        Button("重试") { model.refreshPermissions() }
-                    case .idle, .listening:
-                        if model.devices.isEmpty {
-                            Text("先在系统设置配对，再按一下遥控器唤醒。")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        sectionLabel("Agent 方案", icon: "BridgeProfiles")
-                        Spacer()
-                        Button {
-                            openEditor(.profile(.init(name: "", target: nil), isNew: true))
-                        } label: {
-                            Image(systemName: "plus").frame(width: 21, height: 21)
-                        }
-                        .buttonStyle(.borderless).help("新建 Agent 方案").accessibilityLabel("新建 Agent 方案")
-                    }
-                    ForEach(model.config.agents) { profile in
-                        agentRow(profile)
-                    }
-                    if let profile = model.profile {
-                        Button("编辑当前方案", systemImage: "slider.horizontal.3") {
-                            openEditor(.profile(profile, isNew: false))
-                        }
-                        .buttonStyle(.link)
-                    }
-                }
-            }
-            .padding(18)
-        }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-    }
-
-    private func agentRow(_ profile: AgentProfile) -> some View {
-        let selected = model.config.activeAgentID == profile.id
-        return Button {
-            model.selectAgent(profile.id)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: agentIcon(profile.id))
-                    .frame(width: 20).foregroundStyle(selected ? accent : Color.secondary)
-                Text(profile.name).lineLimit(1)
-                Spacer(minLength: 1)
-                if selected { Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(accent) }
-            }
-            .padding(.vertical, 8).padding(.horizontal, 9)
-            .contentShape(Rectangle())
-            .background(selected ? accent.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    private func agentIcon(_ id: String) -> String {
-        switch id {
-        case "chatgpt": "bubble.left"
-        case "codex": "chevron.left.forwardslash.chevron.right"
-        case "cursor": "cursorarrow.rays"
-        case "claude-code": "terminal"
-        default: "square.dashed"
-        }
-    }
-
-    private var workHeader: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("按键映射").font(.system(size: 26, weight: .bold))
-                Text("选择一个键位，录入实体按键，再为当前 Agent 分配动作。")
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            Label("ChatGPT", systemImage: "bubble.left")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(accent)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            Text("桌面端 Codex")
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+            if AgentRunner.appURL(AgentProfile.chatGPT.target) == nil {
+                Label("未找到 ChatGPT 桌面端", systemImage: "exclamationmark.circle")
+                    .font(.caption).padding(.horizontal, 10)
             }
             Spacer()
-        }
-    }
-
-    private var inspector: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 7) {
-                sectionLabel("当前键位", icon: "BridgeMapping")
-                Text(key.name).font(.title2.bold())
+            if model.monitorState == .permission {
+                permission("开启输入监控后，遥控台才能读取按键。", button: "打开输入监控设置", action: model.requestListen)
             }
-            Divider()
-            captureControls
-            Divider()
-            actionControls
-            if let feedback = model.feedback {
-                Label(feedback, systemImage: "checkmark.circle")
-                    .foregroundStyle(.green).font(.caption).fixedSize(horizontal: false, vertical: true)
-            }
-            if let error = model.error {
-                Label(error, systemImage: "exclamationmark.circle").foregroundStyle(.red)
-                    .font(.caption).fixedSize(horizontal: false, vertical: true)
-            }
-            if let error = model.storageError {
-                Text(error).foregroundStyle(.red).font(.caption).fixedSize(horizontal: false, vertical: true)
+            if !model.canPost || !model.canUseAccessibility {
+                permission("ChatGPT 和菜单动作需要辅助功能权限。", button: "打开辅助功能设置", action: model.requestPost)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
+        .padding(15)
+        .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
     }
 
-    private var captureControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("实体信号").font(.headline)
-            if model.learning == key.id {
-                Label("现在按一下遥控器的「\(key.name)」", systemImage: "waveform")
-                    .foregroundStyle(accent).fixedSize(horizontal: false, vertical: true)
-                Button("取消录入") { model.cancelLearning() }
-            } else {
-                let signal = model.config.activeRemote?.input(for: key.id)
-                Text(signal?.label ?? "尚未录入")
-                    .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                HStack {
-                    Button {
-                        model.startLearning()
-                    } label: {
-                        Label {
-                            Text(signal == nil ? "录入按键" : "重新录入")
-                        } icon: {
-                            Image("BridgeLearn", bundle: .module)
+    private func permission(_ explanation: String, button: String, action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button(button, action: action).buttonStyle(.link)
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 6)
+    }
+
+    private var deviceStage: some View {
+        VStack(spacing: 15) {
+            Spacer(minLength: 0)
+            XiaomiArtwork(highlight: { key in
+                if let press = model.hardwarePress, press.key == key {
+                    return press.phase.indicatorColor.opacity(0.55)
+                }
+                return model.slot == key ? accent.opacity(0.50) : .clear
+            }, help: { "\($0.name) · 定位" }, activate: model.selectSlot)
+            .frame(maxHeight: 475)
+            VStack(spacing: 6) {
+                if model.selectableDevices.count > 1 {
+                    Picker("遥控器", selection: Binding(
+                        get: { model.connectedDevice.flatMap { model.selectableDevices.contains($0) ? $0 : nil } },
+                        set: { if let id = $0 { model.selectDevice(id) } }
+                    )) {
+                        if model.connectedDevice == nil || model.connectedDevice.map(model.ambiguousDevices.contains) == true {
+                            Text("选择遥控器").tag(nil as DeviceID?)
+                        }
+                        ForEach(model.selectableDevices, id: \.self) { id in
+                            Text([id.name, id.serial].compactMap { $0 }.joined(separator: " · ")).tag(Optional(id))
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.canReadKeys || !model.isEnabled || model.isDiagnosing)
-                    if signal != nil {
-                        Button("清除") { model.forget(key.id) }
-                    }
+                    .labelsHidden().frame(maxWidth: 225)
+                } else {
+                    Text("小米蓝牙遥控器 2 Pro").font(.callout.weight(.semibold))
                 }
-                if !model.connected {
-                    Text("连接并选择蓝牙设备后即可录入。").font(.caption).foregroundStyle(.secondary)
-                } else if model.monitorState == .permission {
-                    Text("设备已连接。开启左侧的输入监控后即可录入。")
-                        .font(.caption).foregroundStyle(.secondary)
+                if !model.ambiguousDevices.isEmpty {
+                    Text("无法区分部分同型号遥控器。请在蓝牙设置中断开其中一支。")
+                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if model.connected {
+                    Text("\(model.learnedCount) / 13 已录入")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                if !model.connected || !model.ambiguousDevices.isEmpty {
+                    Button("打开蓝牙设置") { model.openBluetooth() }.buttonStyle(.link)
+                } else if case .failed = model.monitorState {
+                    Button("重试监听") { model.refreshPermissions() }.buttonStyle(.link)
                 }
             }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 20)
+        .frame(maxHeight: .infinity)
+        .background {
+            RadialGradient(colors: [accent.opacity(0.09), .clear], center: .center, startRadius: 12, endRadius: 240)
         }
     }
 
-    private var actionControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Agent 动作").font(.headline)
-            if let profile = model.profile {
-                Text(profile.name).font(.caption).foregroundStyle(.secondary)
-                let action = profile.actions[key.id]
-                Text(action?.title ?? "未分配动作").font(.body.weight(.medium))
-                if let detail = action?.detail {
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
-                HStack {
-                    Button("配置动作") { openEditor(.action(profile, key)) }
-                    if let action {
-                        Button {
-                            model.testAction(action)
-                        } label: {
-                            Label {
-                                Text("试运行")
-                            } icon: {
-                                Image("BridgeRun", bundle: .module)
+    private var mapping: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(RemoteKey.xiaomi) { key in
+                            row(key).id(key.id)
+                            if key.id != RemoteKey.xiaomi.last?.id {
+                                Divider().padding(.horizontal, 9)
                             }
                         }
-                        .disabled(model.isRunning || model.learning != nil || model.isDiagnosing)
                     }
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 7)
                 }
-                if let action, (action == .chatBar || action.requiresPost), !model.canPost {
-                    Button("允许发送快捷键") { model.requestPost() }.buttonStyle(.link)
-                    Text("快捷键需要「辅助功能」权限。").font(.caption).foregroundStyle(.secondary)
+                .onChange(of: model.slot) { _, slot in
+                    if systemPickerSlot != slot { systemPickerSlot = nil }
+                    proxy.scrollTo(slot)
                 }
+            }
+            Divider()
+            mappingFooter
+        }
+        .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func row(_ key: RemoteKey) -> some View {
+        let action = model.editableActions[key.id]
+        let selected = model.slot == key.id
+        let phase = model.hardwarePress.flatMap { $0.key == key.id ? $0.phase : nil }
+        return HStack(spacing: 10) {
+            Button {
+                model.selectSlot(key.id)
+            } label: {
+                Label {
+                    Text(key.name)
+                        .fontWeight(selected ? .semibold : .regular)
+                } icon: {
+                    Image(systemName: key.symbol).frame(width: 20)
+                }
+                .foregroundStyle(selected ? accent : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? [.isSelected] : [])
+            if let phase {
+                Label {
+                    Text(phase.indicatorTitle)
+                } icon: {
+                    Image(systemName: phase.indicatorSymbol).foregroundStyle(phase.indicatorColor)
+                }
+                .font(.caption)
+                .lineLimit(1)
+                .transition(.opacity)
+            }
+            actionMenu(key, action: action)
+                .frame(width: 174)
+        }
+        .frame(minHeight: 37)
+        .padding(.horizontal, 9)
+        .background(phase?.indicatorColor.opacity(0.13) ?? .clear, in: RoundedRectangle(cornerRadius: 7))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: phase)
+    }
+
+    private func actionMenu(_ key: RemoteKey, action: AgentAction?) -> some View {
+        Menu {
+            Button("不分配动作") { choose(nil, for: key) }
+            Section("ChatGPT") {
+                actionItem(.openApp, for: key)
+                actionItem(.shortcut(AgentProfile.newChat), for: key)
+                actionItem(.shortcut(AgentProfile.sendDraft), for: key)
+                actionItem(.shortcut(AgentProfile.stop), for: key)
+                actionItem(.dictation, for: key)
+            }
+            Section("macOS") {
+                actionItem(.displaySleep, for: key)
+                actionItem(.appleMenu, for: key)
+                Button("选择系统快捷键…") {
+                    model.selectSlot(key.id)
+                    systemPickerSlot = key.id
+                    refreshHotKeys()
+                }
+            }
+        } label: {
+            Text(action.map(actionLabel) ?? "不分配动作").lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityLabel("\(key.name)的功能")
+        .help(action.map(actionLabel) ?? "不分配动作")
+    }
+
+    private func actionItem(_ action: AgentAction, for key: RemoteKey) -> some View {
+        Button { choose(action, for: key) } label: {
+            if action == model.editableActions[key.id] {
+                Label(actionLabel(action), systemImage: "checkmark")
+            } else {
+                Text(actionLabel(action))
             }
         }
     }
 
-    private func openEditor(_ editor: Editor) {
-        model.cancelLearning()
-        model.isEditing = true
-        self.editor = editor
+    private func choose(_ action: AgentAction?, for key: RemoteKey) {
+        model.selectSlot(key.id)
+        model.setAction(action, for: key.id)
+        systemPickerSlot = nil
     }
 
-    private func sectionLabel(_ text: String, icon: String) -> some View {
-        Label {
-            Text(text)
-        } icon: {
-            Image(icon, bundle: .module)
+    private var mappingFooter: some View {
+        let key = RemoteKey.xiaomi.first { $0.id == model.slot } ?? RemoteKey.xiaomi[0]
+        let learned = model.editableRemote?.input(for: key.id)
+        let action = model.editableActions[key.id]
+        return VStack(alignment: .leading, spacing: 8) {
+            if systemPickerSlot == key.id { systemShortcuts(for: key) }
+            if let detail = footerDetail(for: key, action: action, learned: learned) {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(model.error != nil || model.storageError != nil ? .red : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Label(key.name, systemImage: key.symbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(accent)
+                if model.learning == key.id {
+                    Button("取消录入") { model.cancelLearning() }.buttonStyle(.link)
+                } else if learned == nil {
+                    Button("录入") { model.startLearning() }
+                        .disabled(!model.canReadKeys || !model.isEnabled || model.isDiagnosing)
+                }
+                Spacer(minLength: 4)
+                if model.learning == nil, model.hasConfigurationChanges {
+                    Menu {
+                        Button("撤销未保存的更改") { model.discardConfigurationChanges() }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .accessibilityLabel("更多操作")
+                }
+                Button("保存") { model.saveConfigurationChanges() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.hasConfigurationChanges || model.learning != nil)
+            }
+            .controlSize(.small)
         }
-            .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-            .accessibilityAddTraits(.isHeader)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func footerDetail(for key: RemoteKey, action: AgentAction?, learned: InputCode?) -> String? {
+        if let error = model.storageError ?? model.error { return error }
+        if model.learning == key.id { return "请按一下遥控器上的「\(key.name)」。" }
+        if model.hasConfigurationChanges { return model.feedback ?? "有未保存的更改。" }
+        if action == .dictation, learned?.isKeyboardF5 == true {
+            return "在 ChatGPT 中将「听写快捷键」设为 F5，并解除「点按一次听写」的回车绑定。按住麦克风键说话，松开后转写，按「确定」发送。"
+        }
+        if let message = model.dictation.phase.message { return message }
+        if action == .dictation {
+            if !model.canUseAccessibility { return "开启辅助功能后才能使用 Codex 听写。" }
+            if learned == nil { return "先录入遥控器上的实体键。" }
+            let button = key.id == "voice" ? "麦克风键" : "「\(key.name)」键"
+            return "在 Codex 对话中，按住遥控器的\(button)说话，松开后发送。"
+        }
+        return model.feedback
+    }
+
+    private func systemShortcuts(for key: RemoteKey) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let hotKeys, !hotKeys.isEmpty {
+                Menu("选择已启用的快捷键") {
+                    ForEach(hotKeys, id: \.self) { shortcut in
+                        Button(shortcut.label) { choose(.systemShortcut(shortcut), for: key) }
+                    }
+                }
+            } else {
+                Text(hotKeysError ?? "没有可选择的系统快捷键。").foregroundStyle(.secondary)
+            }
+            HStack(spacing: 10) {
+                Button("打开键盘快捷键设置", action: SystemActions.openKeyboardSettings)
+                Button("刷新", action: refreshHotKeys)
+            }
+            .buttonStyle(.link)
+        }
+    }
+
+    private func refreshHotKeys() {
+        do {
+            hotKeys = try SystemActions.enabledHotKeys()
+            hotKeysError = nil
+        } catch {
+            hotKeys = nil
+            hotKeysError = error.localizedDescription
+        }
+    }
+
+    private func actionLabel(_ action: AgentAction) -> String {
+        [action.title, action.detail].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
-private extension AgentAction {
-    var requiresPost: Bool { if case .shortcut = self { true } else { false } }
+struct ConfigurationConnectionStatus: View {
+    let model: RemoteModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(model.canReadKeys ? Color.green : .secondary).frame(width: 6, height: 6)
+                .accessibilityHidden(true)
+            Text(model.connectionStatus).font(.callout)
+        }
+        .foregroundStyle(.secondary)
+        .fixedSize()
+        .padding(.horizontal, 4)
+    }
+}
+
+struct ConfigurationResponseSwitch: View {
+    @Bindable var model: RemoteModel
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            control
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .glassEffect(.regular, in: .capsule)
+        } else {
+            control.padding(.horizontal, 4)
+        }
+    }
+
+    private var control: some View {
+        HStack(spacing: 7) {
+            Text("响应遥控器").font(.callout).accessibilityHidden(true)
+            Toggle("响应遥控器", isOn: $model.isEnabled)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.small)
+                .accessibilityLabel("响应遥控器")
+        }
+        .fixedSize()
+        .help("暂停时仍可查看按键信号")
+    }
+}
+
+private extension RemoteModel.HardwarePress.Phase {
+    var indicatorTitle: String {
+        switch self {
+        case .down: "按下"
+        case .holding: "长按中"
+        case .shortPress: "短按"
+        case .longPress: "长按"
+        }
+    }
+
+    var indicatorSymbol: String {
+        switch self {
+        case .down: "circle.fill"
+        case .holding: "waveform"
+        case .shortPress, .longPress: "checkmark.circle.fill"
+        }
+    }
+
+    var indicatorColor: Color {
+        switch self {
+        case .down, .shortPress: .green
+        case .holding, .longPress: .teal
+        }
+    }
 }
