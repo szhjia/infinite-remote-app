@@ -73,7 +73,7 @@ struct Workspace: View {
                     .tracking(2.4).foregroundStyle(.secondary)
             }
             Spacer()
-            Toggle("允许遥控触发", isOn: $model.isEnabled)
+            Toggle("响应遥控器", isOn: $model.isEnabled)
                 .toggleStyle(.switch).controlSize(.small)
                 .help("暂停时仍可查看按键信号")
             Divider().frame(height: 24).padding(.horizontal, 3)
