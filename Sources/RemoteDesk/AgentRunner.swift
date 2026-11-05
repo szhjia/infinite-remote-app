@@ -36,6 +36,8 @@ enum AgentRunner {
             guard CGPreflightPostEventAccess() else { throw Failure.permission }
             let app = try await openApp(target)
             try post(shortcut, pid: app.processIdentifier)
+        case .toggleDisplays:
+            try await DisplayToggle.shared.toggle()
         case .displaySleep:
             try await SystemActions.sleepDisplay()
         case .appleMenu:

@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>遥控台 · 按键配置设计</title>
+<style>
+:root{color-scheme:dark;font:13px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#f0f0f2;background:#101217;--muted:#a9adb8;--line:#ffffff19;--blue:#8bbdff}
+*{box-sizing:border-box}body{margin:0;padding:24px}button{color:inherit;font:inherit;cursor:pointer;background:#ffffff0e;border:1px solid var(--line);border-radius:5px;padding:5px 8px}button:hover{background:#ffffff1a}button:focus-visible{outline:2px solid var(--blue)}.toolbar{max-width:1300px;margin:0 auto 12px;display:flex;justify-content:space-between;color:var(--muted)}.window{width:1300px;max-width:100%;height:650px;margin:auto;background:#171a20;border:1px solid #ffffff24;border-radius:12px;overflow:hidden;display:grid;grid-template-columns:192px minmax(300px,1fr) minmax(504px,43.4%)}.window.compact{width:1000px;height:600px;grid-template-columns:192px minmax(300px,1fr) 504px}.sidebar,.mapping,.stage{position:relative;min-width:0}.sidebar{background:#202229;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:15px;justify-content:space-between}.stage{display:flex;flex-direction:column;padding:15px 8px;text-align:center}.stage header,.mapping header{display:flex;align-items:center;justify-content:space-between;padding:0 8px}.stage header label{color:var(--muted);white-space:nowrap}.drawing{position:relative;flex:1;margin:8px 0}.drawing svg{position:absolute;width:100%;height:100%;inset:0}.labels{position:absolute;inset:0;pointer-events:none}.label{position:absolute;pointer-events:auto;font-size:11px;background:#171a20;border-color:transparent;padding:2px 3px;transform:translateY(-50%)}.label.selected{color:var(--blue);background:#23344b}.mapping{background:#232428;border-left:1px solid var(--line);display:flex;flex-direction:column;padding:12px}.mapping header{padding:2px 0 11px}.muted{color:var(--muted)}.grid{display:grid;grid-template-columns:78px repeat(3,minmax(0,1fr));gap:8px;align-items:center}.heads{border-block:1px solid var(--line);color:var(--muted);height:30px}.rows{overflow:auto;flex:1}.row{height:33px;border-bottom:1px solid #ffffff0e}.row.selected{background:#8bbdff12}.key{display:flex;align-items:center}.key>button:first-child{background:none;border:0;padding:4px;white-space:nowrap}.cell{border:0;background:transparent;height:25px;display:flex;align-items:center;gap:4px;padding:0 4px;min-width:0}.cell span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cell small{margin-left:auto;color:var(--muted)}.warn{color:#ffc674;border:none;background:none;padding:1px}.footer{text-align:right;padding-top:8px}.popover{position:fixed;z-index:2;background:#30333a;border:1px solid #ffffff32;border-radius:8px;box-shadow:0 8px 24px #0008;padding:6px;min-width:185px}.popover button{display:block;width:100%;text-align:left;background:transparent;border:0}.popover button:hover{background:#ffffff1a}.popover h4,.popover p{margin:5px 8px}.popover h4{font-size:10px;color:var(--muted)}.popover .choice{display:grid;grid-template-columns:15px 1fr 14px;gap:6px}.stage footer{color:var(--muted);font-size:11px}.stage footer button{margin-top:6px}.hit{cursor:pointer}.active{color:var(--blue)}@media(max-width:1048px){body{padding:10px}.window,.toolbar{min-width:1000px}}
+</style>
+<div class="toolbar"><span>RemoteDesk 工作台 · 交互原型</span><button id="compact" type="button">切换最小窗口</button></div>
+<div class="window" id="window">
+<aside class="sidebar"><strong>RemoteDesk</strong><button id="settings">⚙　系统设置</button></aside>
+<section class="stage"><header><strong>遥控器</strong><label><input id="guide" type="checkbox" checked> 显示设备说明</label></header><div class="drawing" id="drawing"><svg id="art"></svg><div class="labels" id="labels"></div></div><footer>小米蓝牙遥控器 2 Pro<br><button id="hardware">硬件能力</button></footer></section>
+<section class="mapping"><header><strong>按键配置</strong><span class="muted">默认配置 · 只读</span></header><div class="grid heads"><span>按键名</span><span>单击</span><span>双击</span><span>长按</span></div><div class="rows" id="rows"></div><div class="footer"><button id="simulate">模拟校准冲突</button> <button id="reset">恢复默认</button> <button id="save" disabled>保存</button></div></section>
+</div>
+<script>
+const layout = {
+  "width": 724,
+  "height": 2172,
+  "visible": {
+    "x": 100,
+    "y": 106,
+    "width": 525,
+    "height": 2001
+  },
+  "keys": [
+    {
+      "id": "power",
+      "name": "电源",
+      "symbol": "power",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.315,
+        "y": 0.115,
+        "width": 0.166,
+        "height": 0.055
+      },
+      "longPress": true
+    },
+    {
+      "id": "voice",
+      "name": "语音",
+      "symbol": "mic",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.685,
+        "y": 0.115,
+        "width": 0.166,
+        "height": 0.055
+      }
+    },
+    {
+      "id": "up",
+      "name": "方向上",
+      "symbol": "chevron.up",
+      "shape": {
+        "kind": "sector",
+        "x": 0.5,
+        "y": 0.266,
+        "width": 0.597,
+        "height": 0.201,
+        "angle": -90,
+        "innerRatio": 0.53
+      }
+    },
+    {
+      "id": "down",
+      "name": "方向下",
+      "symbol": "chevron.down",
+      "shape": {
+        "kind": "sector",
+        "x": 0.5,
+        "y": 0.266,
+        "width": 0.597,
+        "height": 0.201,
+        "angle": 90,
+        "innerRatio": 0.53
+      }
+    },
+    {
+      "id": "left",
+      "name": "方向左",
+      "symbol": "chevron.left",
+      "shape": {
+        "kind": "sector",
+        "x": 0.5,
+        "y": 0.266,
+        "width": 0.597,
+        "height": 0.201,
+        "angle": 180,
+        "innerRatio": 0.53
+      }
+    },
+    {
+      "id": "right",
+      "name": "方向右",
+      "symbol": "chevron.right",
+      "shape": {
+        "kind": "sector",
+        "x": 0.5,
+        "y": 0.266,
+        "width": 0.597,
+        "height": 0.201,
+        "angle": 0,
+        "innerRatio": 0.53
+      }
+    },
+    {
+      "id": "ok",
+      "name": "确认",
+      "symbol": "circle.inset.filled",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.5,
+        "y": 0.266,
+        "width": 0.313,
+        "height": 0.106
+      }
+    },
+    {
+      "id": "back",
+      "name": "返回",
+      "symbol": "chevron.left",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.348,
+        "y": 0.415,
+        "width": 0.235,
+        "height": 0.078
+      }
+    },
+    {
+      "id": "home",
+      "name": "主页",
+      "symbol": "house",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.348,
+        "y": 0.505,
+        "width": 0.235,
+        "height": 0.078
+      }
+    },
+    {
+      "id": "plus",
+      "name": "音量加",
+      "symbol": "plus",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.65,
+        "y": 0.415,
+        "width": 0.235,
+        "height": 0.078
+      }
+    },
+    {
+      "id": "minus",
+      "name": "音量减",
+      "symbol": "minus",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.65,
+        "y": 0.505,
+        "width": 0.235,
+        "height": 0.078
+      }
+    },
+    {
+      "id": "menu",
+      "name": "菜单",
+      "symbol": "line.3.horizontal",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.348,
+        "y": 0.596,
+        "width": 0.235,
+        "height": 0.078
+      }
+    },
+    {
+      "id": "tv",
+      "name": "直播",
+      "symbol": "tv",
+      "shape": {
+        "kind": "ellipse",
+        "x": 0.65,
+        "y": 0.596,
+        "width": 0.235,
+        "height": 0.078
+      }
+    }
+  ],
+  "anchors": [
+    {
+      "capability": "nfc",
+      "shape": {
+        "kind": "rectangle",
+        "x": 0.5,
+        "y": 0.748,
+        "width": 0.11,
+        "height": 0.038
+      }
+    }
+  ]
+}
+;
+const $ = id => document.getElementById(id);
+const options = [['','⊘','无操作',''],['screen','▣','切换显示器','macOS'],['lock','♙','锁定屏幕','macOS'],['switch','▤','切换应用','macOS'],['upvol','◖','提高音量','macOS'],['downvol','◗','降低音量','macOS'],['media','▦','媒体选择器','macOS'],['app','◉','打开 ChatGPT','ChatGPT'],['voice','♩','Codex 听写','ChatGPT'],...['↑','↓','←','→','Return','Esc'].map(x=>[x,'⌨',x,'键盘按键'])];
+const defaults = {power:'screen','power-long':'lock',voice:'voice',home:'app',menu:'switch',plus:'upvol',minus:'downvol',tv:'media',ok:'Return',back:'Esc',up:'↑',down:'↓',left:'←',right:'→'};
+let actions={...defaults}, selected='ok', conflict=false, edited=false;
+const names = {up:'方向上',down:'方向下',left:'方向左',right:'方向右'};
+function close(){document.querySelector('.popover')?.remove()}
+function popup(anchor, html){close();const node=document.createElement('div');node.className='popover';node.innerHTML=html;document.body.append(node);const r=anchor.getBoundingClientRect();node.style.left=Math.max(6,Math.min(r.left,innerWidth-node.offsetWidth-8))+'px';node.style.top=Math.max(6,Math.min(r.bottom+3,innerHeight-node.offsetHeight-8))+'px';return node}
+function pick(id){selected=id; render()}
+function render(){
+ const oldScroll=$('rows').scrollTop;
+ $('rows').innerHTML=layout.keys.map(k=>'<div class="grid row '+(k.id===selected?'selected':'')+'"><div class="key"><button data-key="'+k.id+'">'+k.name+'</button>'+(conflict&&k.id==='back'?'<button class="warn" id="conflict" aria-label="处理按键信号冲突">⚠</button>':'')+'</div>'+['','-double','-long'].map((s,i)=>{
+ if(i&&['voice','minus'].includes(k.id))return '<span></span>';
+ const id=k.id+s;const o=options.find(x=>x[0]===(actions[id]||''));return '<button class="cell" data-slot="'+id+'" title="'+o[2]+'"><span>'+o[1]+'</span><span>'+o[2]+'</span><small>⌄</small></button>';
+ }).join('')+'</div>').join('');
+ $('rows').scrollTop=oldScroll;$('save').disabled=conflict||!edited;
+ renderDrawing();
+}
+function renderDrawing(){
+ const w=$('drawing').clientWidth,h=$('drawing').clientHeight,show=$('guide').checked;
+ const v=layout.visible, s=Math.min((w-(show?110:0))/v.width,(h-16)/v.height),left=(w-v.width*s)/2,top=(h-v.height*s)/2;
+ const x=k=>left+(k.shape.x*layout.width-v.x)*s,y=k=>top+(k.shape.y*layout.height-v.y)*s;
+ const anchor=k=>{
+  const a=(k.shape.angle||0)*Math.PI/180,r=k.shape.kind==='sector'?(1+k.shape.innerRatio)/2:0;
+  return [x(k)+Math.cos(a)*k.shape.width*layout.width*s*r/2,y(k)+Math.sin(a)*k.shape.height*layout.height*s*r/2];
+ };
+ const lr=[[],[]];layout.keys.forEach(k=>lr[(anchor(k)[0]>w/2||['ok','down'].includes(k.id))?1:0].push(k));
+ const labels=lr.flatMap((lane,i)=>{
+  let previous=-12;
+  return lane.sort((a,b)=>anchor(a)[1]-anchor(b)[1]).map((k,j)=>{
+   const ly=Math.max(previous+22,Math.min(anchor(k)[1],h-10-(lane.length-j-1)*22));
+   previous=ly;return [k,i,ly];
+  });
+ });
+ const hit=layout.keys.map(k=>{
+  const b=k.shape,rx=b.width*layout.width*s/2,ry=b.height*layout.height*s/2;
+  if(b.kind==='sector'){const p=(a,r)=>[x(k)+rx*r*Math.cos(a*Math.PI/180),y(k)+ry*r*Math.sin(a*Math.PI/180)].join(' '),a=b.angle-45,z=b.angle+45;return '<path class="hit" data-key="'+k.id+'" fill="'+(selected===k.id?'#8bbdff80':'transparent')+'" d="M '+p(a,1)+' A '+rx+' '+ry+' 0 0 1 '+p(z,1)+' L '+p(z,b.innerRatio)+' A '+rx*b.innerRatio+' '+ry*b.innerRatio+' 0 0 0 '+p(a,b.innerRatio)+' Z"/>'}
+  return '<ellipse class="hit" data-key="'+k.id+'" cx="'+x(k)+'" cy="'+y(k)+'" rx="'+rx+'" ry="'+ry+'" fill="'+(selected===k.id?'#8bbdff80':'transparent')+'"/>';
+ }).join('');
+ const nfc=layout.anchors[0];
+ $('art').setAttribute('viewBox','0 0 '+w+' '+h);
+ $('art').innerHTML='<defs><clipPath id="crop"><rect x="'+left+'" y="'+top+'" width="'+v.width*s+'" height="'+v.height*s+'"/></clipPath></defs><image clip-path="url(#crop)" href="assets/remote-2-pro.png" x="'+(left-v.x*s)+'" y="'+(top-v.y*s)+'" width="'+layout.width*s+'" height="'+layout.height*s+'"/>'+hit+(show?labels.map(([k,i,ly])=>'<path pointer-events="none" d="M '+(i?w-55:55)+' '+ly+' H '+(i?w-62:62)+' L '+anchor(k).join(' ')+'" fill="none" stroke="'+(selected===k.id?'#8bbdff':'#a9adb865')+'"/>').join('')+'<circle pointer-events="none" cx="'+x(nfc)+'" cy="'+y(nfc)+'" r="10" fill="none" stroke="#8bbdff"/>':'');
+ $('labels').innerHTML=show?labels.map(([k,i,ly])=>'<button class="label '+(k.id===selected?'selected':'')+'" data-key="'+k.id+'" style="'+(i?'right':'left')+':1px;top:'+ly+'px">'+(names[k.id]||k.name)+'</button>').join('')+'<button class="label" id="nfc" style="left:2px;top:'+y(nfc)+'px">NFC</button>':'';
+}
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button,[data-key]');if(!b||(!b.closest('.popover')&&!b.id&&!b.dataset.slot))close();if(!b)return;
+ if(b.dataset.key)pick(b.dataset.key);
+ if(b.dataset.slot){const id=b.dataset.slot,active=actions[id]||'';popup(b, ['','ChatGPT','macOS','键盘按键'].map(g=>(g?'<h4>'+g+'</h4>':'')+options.filter(o=>o[3]===g&&(o[0]!=='voice'||!id.includes('-'))).map(o=>'<button class="choice" data-choice="'+o[0]+'"><span>'+o[1]+'</span><span>'+o[2]+'</span><span>'+(o[0]===active?'✓':'')+'</span></button>').join('')).join('')).onclick=ev=>{const choice=ev.target.closest('[data-choice]');if(choice){actions[id]=choice.dataset.choice;edited=true;close();render()}};}
+ if(b.id==='compact'){$('window').classList.toggle('compact');close()}
+ if(b.id==='simulate'){conflict=true;pick('back')}
+ if(b.id==='conflict'){popup(b,'<p>这个信号已绑定到「主页」。</p><button id="keep">保留原绑定</button><button id="transfer">转移到「返回」</button>')}
+ if(['keep','transfer'].includes(b.id)){conflict=false;edited||=b.id==='transfer';close();render()}
+ if(b.id==='settings'){popup(b,'<button>▦　多媒体设置…</button><button id="import">▱　导入型号包…</button>')}
+ if(b.id==='import'){popup($('settings'),'<p>选择包含型号文件与机身图的文件夹。</p><button id="done">关闭预览</button>')}
+ if(b.id==='done')close();
+ if(b.id==='nfc'||b.id==='hardware')popup(b,b.id==='nfc'?'<p>NFC · 机身下半部</p><p>硬件具备 · RemoteDesk 未接入</p>':'<p>机身麦克风 · RemoteDesk 未采集</p><p>USB-C · 机身充电</p>');
+ if(b.id==='reset'){actions={...defaults};edited=false;render()}
+ if(b.id==='save'){edited=false;render()}
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+$('guide').onchange=()=>{close();renderDrawing()};new ResizeObserver(renderDrawing).observe($('drawing'));render();
+</script></html>

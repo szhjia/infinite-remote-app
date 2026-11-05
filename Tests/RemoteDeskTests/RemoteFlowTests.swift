@@ -91,7 +91,7 @@ func upgradesOldCodexPresetWithoutChangingLearnedKeysOrCustomizedActions(customi
     let codex = try #require(saved.activeAgent)
     #expect(codex.name == "ChatGPT")
     #expect(codex.actions["menu"] == .appleMenu)
-    #expect(codex.actions["power"] == .displaySleep)
+    #expect(codex.actions["power"] == .toggleDisplays)
     #expect(codex.actions["power-long"] == .lockScreen)
     #expect(codex.actions["voice"] == .dictation)
     #expect(codex.actions["ok"] == .shortcut(customized ? custom : AgentProfile.sendDraft))
@@ -111,6 +111,7 @@ func restoresLastSavedProfileAndUpdatesOnlyTheOldChatGPTPreset() throws {
     #expect(openModel().profile == .defaults)
 
     var previousPreset = AgentProfile.chatGPT
+    previousPreset.actions["power"] = .displaySleep
     previousPreset.actions.removeValue(forKey: "power-long")
     let custom = AgentProfile(name: "自定义", target: previousPreset.target, actions: previousPreset.actions)
     var previous = Configuration()
@@ -130,7 +131,9 @@ func restoresLastSavedProfileAndUpdatesOnlyTheOldChatGPTPreset() throws {
 
     migrated.setAction(nil, for: "power-long")
     #expect(migrated.saveConfigurationChanges())
-    #expect(openModel().profile == previousPreset)
+    var editedPreset = AgentProfile.chatGPT
+    editedPreset.actions.removeValue(forKey: "power-long")
+    #expect(openModel().profile == editedPreset)
 }
 
 @Test @MainActor
@@ -229,7 +232,7 @@ private func waitForAction(on model: RemoteModel) async throws {
 }
 
 @Test @MainActor
-func liveRemoteOnlyEnablesVirtualButtonsForTheSelectedOnlineXiaomi() {
+func unregisteredRemoteCannotEnableVirtualButtons() {
     let xiaomi = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米蓝牙语音遥控器")
     let other = DeviceID(vendor: 1, product: 2, name: "通用遥控器")
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
@@ -238,15 +241,15 @@ func liveRemoteOnlyEnablesVirtualButtonsForTheSelectedOnlineXiaomi() {
     let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
     model.refreshPermissions()
     #expect(model.connectedDevice == xiaomi)
-    #expect(model.hasConnectedXiaomi)
+    #expect(model.connected)
     #expect(!model.canReadKeys)
     input.onDevices([other])
     #expect(model.connectedDevice == nil)
-    #expect(!model.hasConnectedXiaomi)
+    #expect(!model.connected)
 
     model.selectDevice(other)
     #expect(model.connectedDevice == nil)
-    #expect(!model.hasConnectedXiaomi)
+    #expect(!model.connected)
 }
 
 @Test @MainActor
@@ -317,13 +320,13 @@ func powerDispatchesExactlyOneActionAndDropsInterruptedPresses() async throws {
     #expect(dispatched.isEmpty)
     input.onEvent(device, .released(code, origin: origin))
     try await waitForAction(on: model)
-    #expect(dispatched == [.displaySleep])
+    #expect(dispatched == [.toggleDisplays])
 
     input.onEvent(device, .pressed(code, origin: origin))
     input.onEvent(device, .pressed(code, origin: origin))
     try await waitUntil { dispatched.count == 2 && !model.isRunning }
     input.onEvent(device, .released(code, origin: origin))
-    #expect(dispatched == [.displaySleep, .lockScreen])
+    #expect(dispatched == [.toggleDisplays, .lockScreen])
 
     input.onEvent(device, .pressed(code, origin: origin))
     model.isEnabled = false
@@ -332,7 +335,7 @@ func powerDispatchesExactlyOneActionAndDropsInterruptedPresses() async throws {
     input.onEvent(device, .pressed(code, origin: origin))
     input.onEvent(device, .endpointClosed(origin.endpoint))
     try await Task.sleep(for: .milliseconds(80))
-    #expect(dispatched == [.displaySleep, .lockScreen])
+    #expect(dispatched == [.toggleDisplays, .lockScreen])
 }
 
 @Test @MainActor
@@ -389,7 +392,7 @@ func xiaomiButtonsWorkWithoutLearningAndUseTheSavedAction() async throws {
     #expect(!model.isRunning) // The system already delivers this arrow event.
     var openedSwitcher = false
     model.onSwitchApps = { openedSwitcher = true }
-    press(0x4A)
+    press(0x65)
     #expect(openedSwitcher)
 
     model.setAction(.showDesktop, for: "plus")
@@ -401,13 +404,17 @@ func xiaomiButtonsWorkWithoutLearningAndUseTheSavedAction() async throws {
     #expect(model.editableRemote?.keys.isEmpty == true)
 }
 
-@Test @MainActor
-func xiaomiHomeAliasesToggleAppSwitcherOncePerPhysicalPress() {
+@Test(arguments: [0x4A, 0x35, 0x65]) @MainActor
+func xiaomiChooserStaysOpenAfterOnePressWithMultipleHIDReports(usage: Int) {
+    let key = [0x4A: "home", 0x35: "tv", 0x65: "menu"][usage]!
     let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
     let array = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
-                          usage: Int(UInt32.max), report: 1, value: 0x4A)
+                          usage: Int(UInt32.max), report: 1, value: usage)
     let direct = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
-                           usage: 0x4A, report: 1, value: 1)
+                           usage: usage, report: 1, value: 1)
+    let packed = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                           usage: Int(UInt32.max), report: 1, value: usage << 16)
+    let packedOrigin = RemoteInputOrigin(endpoint: 8, cookie: 3)
     let arrayOrigin = RemoteInputOrigin(endpoint: 8, cookie: 1)
     let directOrigin = RemoteInputOrigin(endpoint: 8, cookie: 2)
     let input = InputFixture(devices: [device])
@@ -417,11 +424,16 @@ func xiaomiHomeAliasesToggleAppSwitcherOncePerPhysicalPress() {
     let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             runAction: { _, _ in })
     model.refreshPermissions()
+    if key == "home" {
+        model.setAction(.appSwitcher, for: key)
+        #expect(model.saveConfigurationChanges(as: "主页切换应用"))
+    }
     var visible = false
     var toggles = 0
     model.onSwitchApps = { visible = true; toggles += 1 }
+    model.onShowMedia = { visible = true; toggles += 1 }
     model.onMediaKey = { slot, _ in
-        guard visible, slot == "home" else { return false }
+        guard visible, slot == key else { return false }
         visible = false
         toggles += 1
         return true
@@ -429,10 +441,13 @@ func xiaomiHomeAliasesToggleAppSwitcherOncePerPhysicalPress() {
 
     input.onEvent(device, .pressed(array, origin: arrayOrigin))
     input.onEvent(device, .pressed(direct, origin: directOrigin))
+    input.onEvent(device, .pressed(packed, origin: packedOrigin))
     #expect(visible)
     #expect(toggles == 1)
     input.onEvent(device, .released(array, origin: arrayOrigin))
     input.onEvent(device, .released(direct, origin: directOrigin))
+    input.onEvent(device, .released(packed, origin: packedOrigin))
+    #expect(visible)
 
     input.onEvent(device, .pressed(direct, origin: directOrigin))
     input.onEvent(device, .pressed(array, origin: arrayOrigin))
@@ -472,6 +487,10 @@ func xiaomiHomeReportsAreOnePressDuringLearningAndAfterRemapping(directFirst: Bo
     }
     #expect(switches == 0)
     #expect(mediaOpenings == 0)
+    #expect(model.editableRemote?.input(for: "tv") == nil)
+    #expect(model.calibrationConflict?.previous == "home")
+    #expect(!model.saveConfigurationChanges())
+    model.resolveCalibrationConflict(transfer: true)
     #expect(model.editableRemote?.input(for: "tv") == learningOrder[0].0)
     try #require(model.saveConfigurationChanges())
     for (code, origin) in learningOrder {
@@ -491,7 +510,7 @@ func mediaAndRunningAppChoosersConsumeNavigationBeforeConfiguredActions() throws
     let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
     let tv = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x61, report: 1, value: 1)
     let right = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x42, report: 1, value: 1)
-    let home = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x45, report: 1, value: 1)
+    let menu = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x45, report: 1, value: 1)
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     let input = InputFixture(devices: [device])
@@ -500,7 +519,7 @@ func mediaAndRunningAppChoosersConsumeNavigationBeforeConfiguredActions() throws
         Issue.record("Unexpected action while selecting media: \(action)")
     }
     model.refreshPermissions()
-    for (slot, code) in [("tv", tv), ("right", right), ("home", home)] {
+    for (slot, code) in [("tv", tv), ("right", right), ("menu", menu)] {
         model.selectSlot(slot)
         model.startLearning()
         input.press(device, code)
@@ -527,7 +546,7 @@ func mediaAndRunningAppChoosersConsumeNavigationBeforeConfiguredActions() throws
     model.isEnabled = false
     #expect(!showing)
     model.isEnabled = true
-    input.press(device, home)
+    input.press(device, menu)
     #expect(showing && switchingApps)
     input.press(device, right)
     #expect(navigation == ["right", "right"])
@@ -714,4 +733,227 @@ private func waitUntil(_ condition: () -> Bool) async throws {
         try await clock.sleep(for: .milliseconds(5))
     }
     try #require(condition())
+}
+
+@Test @MainActor
+func importsOfflineModelAndRoutesItsHardwareWithoutSharingXiaomiActions() async throws {
+    let xiaomi = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米")
+    let device = DeviceID(vendor: 0x1234, product: 0x5678, name: "Test Remote")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let package = directory.appending(path: "Fixture")
+    let storeURL = directory.appending(path: "configuration.json")
+    let input = InputFixture(devices: [])
+    let model = RemoteModel(hid: input, storeURL: storeURL, runAction: { _, _ in })
+    try writeFixturePackage(package, image: model.remoteDefinition.front)
+    try model.installModel(from: package)
+
+    #expect(model.remoteDefinition.id == "test-remote")
+    #expect(model.keys.map(\.id) == ["play", "stop"])
+    #expect(model.profile?.actions.isEmpty == true)
+    model.setAction(.showDesktop, for: "play")
+    #expect(model.saveConfigurationChanges(as: "自定义"))
+    model.previewModel(RemoteDefinition.xiaomiID)
+    #expect(model.profile?.actions["power"] == .toggleDisplays)
+    #expect(!model.profiles.contains { $0.name == "自定义" })
+
+    try FileManager.default.removeItem(at: package)
+    let secondInput = InputFixture(devices: [device, xiaomi])
+    secondInput.state = .listening
+    var dispatched: [AgentAction] = []
+    let reloaded = RemoteModel(hid: secondInput, storeURL: storeURL) { action, _ in dispatched.append(action) }
+    reloaded.refreshPermissions()
+    reloaded.selectDevice(device)
+    #expect(reloaded.connectedDevice == device)
+    #expect(reloaded.profile?.name == "自定义")
+
+    let signal = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 205, report: 2, value: 1)
+    secondInput.press(xiaomi, signal)
+    #expect(!reloaded.isRunning)
+    secondInput.press(device, signal)
+    try await waitForAction(on: reloaded)
+    #expect(dispatched == [.showDesktop])
+    secondInput.onEvent(device, .released(signal))
+
+    reloaded.selectSlot("stop")
+    reloaded.startLearning()
+    secondInput.press(device, signal)
+    #expect(reloaded.calibrationConflict?.previous == "play")
+    #expect(reloaded.editableRemote?.slot(for: signal) == nil)
+    #expect(!reloaded.saveConfigurationChanges())
+    reloaded.resolveCalibrationConflict(transfer: false)
+    #expect(reloaded.editableRemote?.slot(for: signal) == nil)
+    reloaded.startLearning()
+    secondInput.onEvent(device, .released(signal))
+    secondInput.press(device, signal)
+    reloaded.resolveCalibrationConflict(transfer: true)
+    #expect(reloaded.editableRemote?.slot(for: signal) == "stop")
+    #expect(reloaded.saveConfigurationChanges())
+    secondInput.onEvent(device, .released(signal))
+    secondInput.press(device, signal)
+    #expect(reloaded.hardwarePress?.key == "stop")
+    #expect(dispatched == [.showDesktop])
+}
+
+@Test @MainActor
+func invalidOrConflictingModelDoesNotReplaceInstalledPackage() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var catalog = RemoteCatalog(directory: directory.appending(path: "Installed"))
+    let package = directory.appending(path: "Fixture")
+    try writeFixturePackage(package, image: catalog.builtIn.front, inputKey: "missing")
+    #expect(throws: RemotePackageError.self) { try catalog.install(package) }
+    #expect(catalog.models.count == 1)
+
+    try writeFixturePackage(package, image: catalog.builtIn.front, vendor: 0x2717, product: 0x32B8)
+    #expect(throws: RemotePackageError.self) { try catalog.install(package) }
+    #expect(catalog.models.count == 1)
+
+    try writeFixturePackage(package, image: catalog.builtIn.front)
+    _ = try catalog.install(package)
+    #expect(throws: RemotePackageError.self) { try catalog.install(package) }
+    #expect(catalog.models.map(\.id) == [RemoteDefinition.xiaomiID, "test-remote"])
+}
+
+private func writeFixturePackage(_ package: URL, image: URL, vendor: Int = 0x1234, product: Int = 0x5678,
+                                 inputKey: String = "play") throws {
+    let files = FileManager.default
+    try files.createDirectory(at: package, withIntermediateDirectories: true)
+    let front = package.appending(path: "front.png")
+    if !files.fileExists(atPath: front.path) { try files.copyItem(at: image, to: front) }
+    let manifest = """
+    {"version":1,"id":"test-remote","name":"双键测试遥控器","devices":[{"vendor":\(vendor),"product":\(product)}],
+     "front":"front.png","capabilities":[]}
+    """
+    let layout = """
+    {"width":724,"height":2172,"visible":{"x":100,"y":106,"width":525,"height":700},
+     "keys":[{"id":"play","name":"播放","symbol":"play",
+              "shape":{"kind":"rectangle","x":0.31,"y":0.18,"width":0.24,"height":0.12}},
+             {"id":"stop","name":"停止","symbol":"stop",
+              "shape":{"kind":"ellipse","x":0.67,"y":0.25,"width":0.20,"height":0.08}}],"anchors":[]}
+    """
+    let inputs = """
+    [{"key":"\(inputKey)","collectionPage":12,"collectionUsage":1,"page":12,"usage":205,"report":2}]
+    """
+    for (name, content) in [("manifest", manifest), ("layout", layout), ("inputs", inputs)] {
+        try Data(content.utf8).write(to: package.appending(path: "\(name).json"))
+    }
+}
+
+@Test @MainActor
+func versionSixConfigurationPreservesSelectedXiaomiAndItsCalibratedProfile() throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let storeURL = directory.appending(path: "configuration.json")
+    let signal = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x28, report: 1, value: 1)
+    var previous = Configuration()
+    previous.version = 6
+    previous.selectDevice(device)
+    previous.updateRemote { $0.learn(signal, as: "back") }
+    let profile = AgentProfile(name: "工作", target: nil, actions: ["back": .showDesktop])
+    previous.agents = [profile]
+    previous.activeAgentID = profile.id
+    let original = try JSONEncoder().encode(previous)
+    try original.write(to: storeURL)
+
+    let model = RemoteModel(hid: InputFixture(devices: [device]), storeURL: storeURL, runAction: { _, _ in })
+    #expect(model.profile == profile)
+    #expect(model.config.selectedDevice == device)
+    #expect(model.config.activeRemote?.slot(for: signal) == "back")
+    #expect(model.config.version == Configuration.currentVersion)
+    #expect(try Data(contentsOf: storeURL.appendingPathExtension("v6.backup")) == original)
+}
+
+@Test @MainActor
+func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    var actions: [AgentAction] = []
+    let model = RemoteModel(hid: input, storeURL: folder.appending(path: "configuration.json"),
+                            powerHoldDelay: .milliseconds(80), doubleClickDelay: .milliseconds(50)) { action, _ in
+        actions.append(action)
+    }
+    model.refreshPermissions()
+    model.setAction(.showDesktop, for: "tv")
+    model.setAction(.lockScreen, for: "tv-double")
+    model.setAction(.toggleDisplays, for: "tv-long")
+    model.setAction(.showDesktop, for: "voice-double")
+    model.setAction(.showDesktop, for: "minus-long")
+    model.setAction(.dictation, for: "tv")
+    #expect(model.editableActions["voice-double"] == nil)
+    #expect(model.editableActions["minus-long"] == nil)
+    #expect(model.editableActions["tv"] == .showDesktop)
+    try #require(model.saveConfigurationChanges(as: "手势"))
+
+    let code = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x35, report: 1, value: 1)
+    let origin = RemoteInputOrigin(endpoint: 9, cookie: 1)
+    let array = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                          usage: Int(UInt32.max), report: 1, value: 0x35)
+    let arrayOrigin = RemoteInputOrigin(endpoint: 9, cookie: 2)
+    func press() {
+        input.onEvent(device, .pressed(array, origin: arrayOrigin))
+        input.onEvent(device, .pressed(code, origin: origin))
+        #expect(model.pressedHardwareKey == "tv")
+    }
+    func release() {
+        let previousRelease = model.lastKeyRelease
+        input.onEvent(device, .released(code, origin: origin))
+        #expect(model.pressedHardwareKey == "tv")
+        #expect(model.lastKeyRelease == previousRelease)
+        input.onEvent(device, .released(array, origin: arrayOrigin))
+        #expect(model.pressedHardwareKey == nil)
+        #expect(model.lastKeyRelease?.key == "tv")
+        #expect(model.lastKeyRelease != previousRelease)
+    }
+    func tap() { press(); release() }
+
+    tap()
+    #expect(!model.isRunning)
+    tap()
+    try await waitUntil { actions.count == 1 && !model.isRunning }
+    #expect(actions == [.lockScreen])
+
+    tap()
+    try await waitUntil { actions.count == 2 && !model.isRunning }
+    #expect(actions == [.lockScreen, .showDesktop])
+
+    tap()
+    press()
+    try await waitUntil { actions.count == 3 && !model.isRunning }
+    release()
+    #expect(actions == [.lockScreen, .showDesktop, .toggleDisplays])
+
+    tap()
+    model.setDiagnosing(true)
+    model.setDiagnosing(false)
+    tap()
+    input.onEvent(device, .endpointClosed(origin.endpoint))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(actions.count == 3)
+
+    let previousRelease = model.lastKeyRelease
+    press()
+    input.onEvent(device, .endpointClosed(origin.endpoint))
+    #expect(model.pressedHardwareKey == nil)
+    #expect(model.lastKeyRelease == previousRelease)
+
+    // Completing a double-click must not replace the feedback of a newer held key.
+    let right = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x4F, report: 1, value: 1)
+    tap()
+    press()
+    input.press(device, right)
+    input.onEvent(device, .released(code, origin: origin))
+    input.onEvent(device, .released(array, origin: arrayOrigin))
+    #expect(model.hardwarePress?.key == "right")
+    #expect(model.pressedHardwareKey == "right")
+    input.onEvent(device, .released(right))
+    #expect(model.pressedHardwareKey == nil)
+    #expect(model.lastKeyRelease?.key == "right")
+    try await waitUntil { actions.count == 4 && !model.isRunning }
+    #expect(actions.last == .lockScreen)
 }

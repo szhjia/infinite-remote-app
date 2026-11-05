@@ -47,7 +47,8 @@ func mediaGridKeepsFocusInOccupiedCells(_ count: Int) {
     let actions = Configuration().activeAgent?.actions
     #expect(actions?["plus"] == .volumeUp)
     #expect(actions?["minus"] == .volumeDown)
-    #expect(actions?["home"] == .appSwitcher)
+    #expect(actions?["home"] == .openApp)
+    #expect(actions?["menu"] == .appSwitcher)
     for (key, code) in [("up", UInt16(126)), ("left", 123), ("right", 124), ("down", 125)] {
         guard case let .foregroundKey(shortcut)? = actions?[key] else {
             Issue.record("Missing foreground key for \(key)")

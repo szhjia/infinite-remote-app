@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Observation
 import SwiftUI
 
@@ -61,7 +62,7 @@ private struct TrayMenu: View {
 }
 
 @MainActor @Observable
-final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NSToolbarDelegate {
+final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = RemoteModel()
     private let mediaSettings = MediaSettings()
     private let mediaLauncher = MediaLauncher()
@@ -74,12 +75,9 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
     }
     private var remote: NSWindow?
+    private var remoteMenuKeyMonitor: Any?
     private var configuration: NSWindow?
     private var isTerminating = false
-    private static let brandItem = NSToolbarItem.Identifier("brand")
-    private static let connectionItem = NSToolbarItem.Identifier("connection")
-    private static let responseItem = NSToolbarItem.Identifier("response")
-    private static let remoteModelItem = NSToolbarItem.Identifier("remoteModel")
     private static let workspaceVisibilityKey = "RemoteDesk.workspaceVisible"
     private static let remoteModelVisibilityKey = "RemoteDesk.remoteModelVisible"
     private static let remoteAlwaysOnTopKey = "RemoteDesk.remoteAlwaysOnTop"
@@ -94,6 +92,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
            let icon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = icon
         }
+        model.onModelChanged = { [weak self] in self?.resizeRemoteForModel() }
         model.onShowMedia = { [weak self] in self?.showMedia() }
         model.onSwitchApps = { [weak self] in self?.mediaLauncher.showRunningApps() }
         model.onMediaKey = { [weak self] slot, keyboard in
@@ -101,6 +100,15 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
         model.onDismissMedia = { [weak self] in self?.mediaLauncher.dismiss() }
         mediaLauncher.onError = { [weak self] message in self?.model.reportError(message) }
+        remoteMenuKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            guard Int(event.keyCode) == kVK_ContextualMenu,
+                  let self, let remote = self.remote, event.window === remote,
+                  self.model.isEnabled, self.model.canReadKeys,
+                  self.model.remoteDefinition.id == RemoteDefinition.xiaomiID else { return event }
+            // RC003's Menu key also arrives through HID. Let that path own the
+            // action instead of opening the model's SwiftUI context menu.
+            return nil
+        }
         model.refreshPermissions()
         let defaults = UserDefaults.standard
         defaults.register(defaults: [Self.workspaceVisibilityKey: true, Self.remoteModelVisibilityKey: true])
@@ -122,12 +130,19 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let remoteMenuKeyMonitor { NSEvent.removeMonitor(remoteMenuKeyMonitor) }
         mediaLauncher.dismiss()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if isTerminating { return .terminateLater }
         isTerminating = true
-        return .terminateNow
+        guard DisplayToggle.shared.needsRestoreOnQuit else { return .terminateNow }
+        Task {
+            await DisplayToggle.shared.restoreOnQuit()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -193,6 +208,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     private func showMedia() {
+        model.cancelGestures()
         mediaLauncher.show(mediaSettings.selection())
     }
 
@@ -265,18 +281,16 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     private func configurationWindow() -> NSWindow {
         if let configuration { return configuration }
-        let window = titledWindow("配置工作台", size: NSSize(width: 1020, height: 720),
-                                  content: Workspace(model: model, mediaSettings: mediaSettings) { [weak self] in
+        let window = titledWindow("配置工作台", size: Workspace.initialSize,
+                                  extraStyle: .fullSizeContentView,
+                                  content: Workspace(model: model, mediaSettings: mediaSettings,
+                                                     remoteModelButton: RemoteModelButton(windows: self)) { [weak self] in
                                       self?.showMedia()
                                   })
-        let toolbar = NSToolbar(identifier: "RemoteDesk.Configuration")
-        toolbar.delegate = self
-        toolbar.allowsUserCustomization = false
-        toolbar.displayMode = .iconOnly
-        window.toolbar = toolbar
-        window.toolbarStyle = .unifiedCompact
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.titleVisibility = .hidden
-        window.contentMinSize = NSSize(width: 850, height: 600)
+        window.contentMinSize = Workspace.minimumSize
         // Use the native zoom button so the paired windows can stay side by side.
         window.collectionBehavior.insert(.fullScreenNone)
         configuration = window
@@ -350,60 +364,28 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     private func remotePanelWidth(for height: CGFloat) -> CGFloat {
-        max(160, (height / 3).rounded())
+        max(160, (height * model.remoteDefinition.layout.bodyRatio + 8).rounded())
     }
 
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.brandItem, .flexibleSpace, Self.connectionItem, Self.responseItem, Self.remoteModelItem]
-    }
-
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
-    }
-
-    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
-                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        let item = NSToolbarItem(itemIdentifier: identifier)
-        if identifier == Self.brandItem {
-            item.label = "RemoteDesk"
-            item.isBordered = false
-            item.visibilityPriority = .high
-            item.view = NSHostingView(rootView:
-                HStack(spacing: 6) {
-                    Image("BridgeBrand", bundle: .module)
-                        .resizable()
-                        .frame(width: 18, height: 18)
-                        .accessibilityHidden(true)
-                    Text("RemoteDesk").font(.system(size: 13, weight: .semibold))
-                }
-                .fixedSize()
-            )
-        } else if identifier == Self.connectionItem {
-            item.label = "连接状态"
-            item.isBordered = false
-            item.view = NSHostingView(rootView: ConfigurationConnectionStatus(model: model))
-        } else if identifier == Self.responseItem {
-            item.label = "响应遥控器"
-            if #available(macOS 26.0, *) {
-                item.isBordered = false
-            } else {
-                item.isBordered = true
-            }
-            item.view = NSHostingView(rootView: ConfigurationResponseSwitch(model: model))
-        } else if identifier == Self.remoteModelItem {
-            item.label = "遥控器模型"
-            item.isBordered = false
-            item.view = NSHostingView(rootView: RemoteModelButton(windows: self))
+    private func resizeRemoteForModel() {
+        guard let remote else { return }
+        if let configuration, remote.parent === configuration {
+            layoutRemote(nextTo: configuration, fitToScreen: true)
         } else {
-            return nil
+            var frame = remote.frame
+            frame.size.width = min(remotePanelWidth(for: frame.height), remote.screen?.visibleFrame.width ?? 700)
+            if let visible = remote.screen?.visibleFrame {
+                frame.origin.x = max(visible.minX, min(frame.minX, visible.maxX - frame.width))
+            }
+            remote.setFrame(frame, display: remote.isVisible)
         }
-        return item
     }
 
-    private func titledWindow<Content: View>(_ title: String, size: NSSize, content: Content) -> NSWindow {
+    private func titledWindow<Content: View>(_ title: String, size: NSSize,
+                                            extraStyle: NSWindow.StyleMask = [], content: Content) -> NSWindow {
+        let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                              backing: .buffered, defer: false)
+                              styleMask: style.union(extraStyle), backing: .buffered, defer: false)
         window.title = title
         window.delegate = self
         window.isReleasedWhenClosed = false
@@ -436,7 +418,7 @@ private final class BorderlessRemoteWindow: NSWindow {
     }
 }
 
-private struct RemoteModelButton: View {
+struct RemoteModelButton: View {
     unowned let windows: RemoteWindows
 
     var body: some View {

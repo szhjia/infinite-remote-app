@@ -94,7 +94,7 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
                 let step = slot == "next" ? 1 : -1
                 focus = (focus + step + apps.count) % apps.count
             }
-        case "tv", "home", "back": dismiss()
+        case "tv", "home", "menu", "back": dismiss()
         default: break
         }
     }

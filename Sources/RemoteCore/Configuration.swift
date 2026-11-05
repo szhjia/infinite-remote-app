@@ -104,6 +104,7 @@ public enum AgentAction: Codable, Equatable, Sendable {
     case nextAgent
     case dictation
     case displaySleep
+    case toggleDisplays
     case appleMenu
     case systemShortcut(SystemHotKey)
     case foregroundKey(KeyboardShortcut)
@@ -129,13 +130,16 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public var name: String
     public var target: AppTarget?
+    public var modelID: String?
     public var actions: [String: AgentAction]
 
-    public init(id: String = UUID().uuidString, name: String, target: AppTarget?, actions: [String: AgentAction] = [:]) {
+    public init(id: String = UUID().uuidString, name: String, target: AppTarget?, actions: [String: AgentAction] = [:],
+                modelID: String? = nil) {
         self.id = id
         self.name = name
         self.target = target
         self.actions = actions
+        self.modelID = modelID
     }
 
     fileprivate static let originalCodex = AgentProfile(
@@ -149,21 +153,21 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
     public static let defaults = AgentProfile(
         id: "default", name: "默认配置", target: .init(bundleID: "com.openai.codex"),
         actions: [
-            "power": .displaySleep, "power-long": .lockScreen, "voice": .dictation,
+            "power": .toggleDisplays, "power-long": .lockScreen, "voice": .dictation,
             "up": .foregroundKey(.init(keyCode: 126, modifiers: [], keyName: "↑")),
             "left": .foregroundKey(.init(keyCode: 123, modifiers: [], keyName: "←")),
             "right": .foregroundKey(.init(keyCode: 124, modifiers: [], keyName: "→")),
             "down": .foregroundKey(.init(keyCode: 125, modifiers: [], keyName: "↓")),
             "ok": .foregroundKey(.init(keyCode: 36, modifiers: [], keyName: "Return")),
-            "back": .foregroundKey(stop), "home": .appSwitcher, "plus": .volumeUp, "minus": .volumeDown,
-            "menu": .openApp, "tv": .mediaChooser
+            "back": .foregroundKey(stop), "home": .openApp, "plus": .volumeUp, "minus": .volumeDown,
+            "menu": .appSwitcher, "tv": .mediaChooser
         ]
     )
 
     public static let chatGPT = AgentProfile(
         id: "codex", name: "ChatGPT", target: .init(bundleID: "com.openai.codex"),
         actions: [
-            "power": .displaySleep, "power-long": .lockScreen, "voice": .dictation, "menu": .appleMenu,
+            "power": .toggleDisplays, "power-long": .lockScreen, "voice": .dictation, "menu": .appleMenu,
             "home": .shortcut(newChat), "ok": .shortcut(sendDraft), "back": .shortcut(stop)
         ]
     )
@@ -171,9 +175,10 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
 }
 
 public struct Configuration: Codable, Equatable, Sendable {
-    public static let currentVersion = 5
+    public static let currentVersion = 8
     public var version = Self.currentVersion
     public var activeAgentID = AgentProfile.defaults.id
+    public var activeAgentIDsByModel: [String: String]?
     public var selectedDevice: DeviceID?
     public var remotes: [RemoteMap] = []
     public var agents: [AgentProfile] = []
@@ -181,9 +186,14 @@ public struct Configuration: Codable, Equatable, Sendable {
     public init() {}
 
     public mutating func upgradeLegacy() {
-        if version == 3 || version == 4 {
+        if version == 6 || version == 7 {
+            version = Self.currentVersion
+            return
+        }
+        if (3...5).contains(version) {
             var previousPreset = AgentProfile.chatGPT
-            previousPreset.actions.removeValue(forKey: "power-long")
+            previousPreset.actions["power"] = .displaySleep
+            if version < 5 { previousPreset.actions.removeValue(forKey: "power-long") }
             if let index = agents.firstIndex(of: previousPreset) {
                 agents[index] = .chatGPT
             }
@@ -196,7 +206,7 @@ public struct Configuration: Codable, Equatable, Sendable {
         let legacy = codexProfiles.first { $0.id == activeAgentID } ?? codexProfiles.first { $0.id == profile.id }
         if let legacy, !(version == 1 && legacy == AgentProfile.originalCodex) {
             profile.target = legacy.target
-            profile.actions = ["power": .displaySleep, "power-long": .lockScreen, "voice": .dictation]
+            profile.actions = ["power": .toggleDisplays, "power-long": .lockScreen, "voice": .dictation]
             for (slot, action) in legacy.actions {
                 switch action {
                 case .nextAgent where slot == "menu":
@@ -228,11 +238,11 @@ public struct Configuration: Codable, Equatable, Sendable {
     }
     public var activeRemote: RemoteMap? { remotes.first { $0.device == selectedDevice } }
 
-    public mutating func selectDevice(_ device: DeviceID) {
-        guard device.isSupportedRemote else { return }
+    public mutating func selectDevice(_ device: DeviceID, layout: RemoteLayout = .xiaomi2Pro) {
+        guard layout == .generic || device.isSupportedRemote else { return }
         selectedDevice = device
         if !remotes.contains(where: { $0.device == device }) {
-            remotes.append(RemoteMap(device: device))
+            remotes.append(RemoteMap(device: device, layout: layout))
         }
     }
 

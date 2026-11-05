@@ -4,8 +4,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct Workspace: View {
+    static let initialSize = NSSize(width: 1300, height: 720)
+    static let minimumSize = NSSize(width: 1000, height: 600)
+
     let model: RemoteModel
     let mediaSettings: MediaSettings
+    let remoteModelButton: RemoteModelButton
     let previewMedia: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -19,6 +23,9 @@ struct Workspace: View {
     @State private var showSystemSettings = false
     @State private var showConfigActions = false
     @State private var previewAfterSheet = false
+    @AppStorage("RemoteDesk.showDeviceGuide") private var showsDeviceGuide = true
+    @State private var showsCapabilities = false
+    @State private var showsCalibrationConflict = false
 
     private enum SettingsSheet: Identifiable {
         case media, profiles, name, imported(ProfileArchive)
@@ -36,15 +43,18 @@ struct Workspace: View {
     private let mappingFont = Font.system(size: 13)
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar.frame(width: 192)
-            Divider()
-            deviceStage.frame(minWidth: 240, idealWidth: 330, maxWidth: .infinity)
-            Divider()
-            mapping.frame(width: 348)
+        GeometryReader { geometry in
+            let extraWidth = max(0, geometry.size.width - Self.minimumSize.width)
+            HStack(spacing: 0) {
+                sidebar.frame(width: 192)
+                Divider().ignoresSafeArea(edges: .top)
+                deviceStage.frame(minWidth: 300, maxWidth: .infinity)
+                Divider().ignoresSafeArea(edges: .top)
+                mapping.frame(width: 504 + extraWidth * 0.20)
+            }
         }
-        .frame(minWidth: 850, minHeight: 600)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
+        .background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: .top)
         .onDisappear { model.cancelLearning() }
         .sheet(item: $sheet, onDismiss: showRequestedMediaPreview) { sheet in
             switch sheet {
@@ -58,6 +68,14 @@ struct Workspace: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Label {
+                Text("RemoteDesk").font(.system(size: 13, weight: .semibold))
+            } icon: {
+                Image("BridgeBrand", bundle: .module)
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+            }
             Label {
                 HStack(spacing: 0) {
                     Text("ChatGPT/").foregroundStyle(.white)
@@ -105,9 +123,15 @@ struct Workspace: View {
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showSystemSettings, arrowEdge: .top) {
-                WorkspacePopoverAction("多媒体设置…") {
-                    showSystemSettings = false
-                    sheet = .media
+                VStack(alignment: .leading, spacing: 2) {
+                    WorkspacePopoverAction("多媒体设置…", symbol: "play.rectangle") {
+                        showSystemSettings = false
+                        sheet = .media
+                    }
+                    WorkspacePopoverAction("导入型号包…", symbol: "folder.badge.plus") {
+                        showSystemSettings = false
+                        importRemoteModel()
+                    }
                 }
                 .fixedSize(horizontal: true, vertical: false)
                 .padding(5)
@@ -115,7 +139,7 @@ struct Workspace: View {
         }
         .padding(15)
         .frame(maxHeight: .infinity)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.45), ignoresSafeAreaEdges: .top)
     }
 
     private var permissionColor: Color {
@@ -146,17 +170,21 @@ struct Workspace: View {
     }
 
     private var deviceStage: some View {
-        VStack(spacing: 15) {
+        VStack(spacing: 12) {
+            HStack {
+                Text("遥控器").font(.callout.weight(.semibold))
+                Spacer()
+                Toggle("显示设备说明", isOn: $showsDeviceGuide)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.caption)
+                    .fixedSize()
+            }
             Spacer(minLength: 0)
-            XiaomiArtwork(highlight: { key in
-                if let press = model.hardwarePress, press.key == key {
-                    return press.phase.indicatorColor.opacity(0.55)
-                }
-                return model.slot == key ? accent.opacity(0.50) : .clear
-            }, help: { "\($0.name) · 定位" }, activate: model.selectSlot)
-            .frame(maxHeight: XiaomiArtwork.workspaceHeight)
+            DeviceArtworkGuide(model: model, showsGuide: showsDeviceGuide)
+                .frame(maxHeight: 475)
             VStack(spacing: 6) {
-                if model.selectableDevices.count > 1 {
+                if model.selectableDevices.count > 1 || (!model.selectableDevices.isEmpty && !model.connected) {
                     Picker("遥控器", selection: Binding(
                         get: { model.connectedDevice.flatMap { model.selectableDevices.contains($0) ? $0 : nil } },
                         set: { if let id = $0 { model.selectDevice(id) } }
@@ -170,7 +198,19 @@ struct Workspace: View {
                     }
                     .labelsHidden().frame(maxWidth: 225)
                 } else {
-                    Text("小米蓝牙遥控器 2 Pro").font(.callout.weight(.semibold))
+                    Text(model.remoteDefinition.manifest.name).font(.callout.weight(.semibold))
+                }
+                if !model.connected && model.installedModels.count > 1 {
+                    Picker("预览型号", selection: Binding(
+                        get: { model.remoteDefinition.id },
+                        set: { model.previewModel($0) }
+                    )) {
+                        ForEach(model.installedModels, id: \.id) { definition in
+                            Text(definition.manifest.name).tag(definition.id)
+                        }
+                    }
+                    .frame(maxWidth: 225)
+                    .disabled(model.hasConfigurationChanges)
                 }
                 if !model.ambiguousDevices.isEmpty {
                     Text("无法区分部分同型号遥控器。请在蓝牙设置中断开其中一支。")
@@ -186,10 +226,18 @@ struct Workspace: View {
                     Button("重试监听") { model.refreshPermissions() }.buttonStyle(.link)
                 }
             }
+            if showsDeviceGuide && !model.remoteDefinition.manifest.capabilities.isEmpty {
+                Button("硬件能力") { showsCapabilities.toggle() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .popover(isPresented: $showsCapabilities) {
+                        DeviceCapabilityDetails(capabilities: model.remoteDefinition.manifest.capabilities)
+                    }
+            }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 20)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 16)
         .frame(maxHeight: .infinity)
         .background {
             RadialGradient(colors: [accent.opacity(0.09), .clear], center: .center, startRadius: 12, endRadius: 240)
@@ -198,111 +246,166 @@ struct Workspace: View {
 
     private var mapping: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("按键配置").font(.callout.weight(.semibold))
-                Spacer()
-                if let profile = model.profile {
-                    Text(profile.id == AgentProfile.defaults.id ? "\(profile.name) · 只读" : profile.name)
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("按键配置").font(.callout.weight(.semibold))
+                    Spacer()
+                    if let profile = model.profile {
+                        Text(profile.id == AgentProfile.defaults.id ? "\(profile.name) · 只读" : profile.name)
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                HStack(spacing: 8) {
+                    ConfigurationConnectionStatus(model: model)
+                    Spacer(minLength: 0)
+                    ConfigurationResponseSwitch(model: model)
+                    remoteModelButton
                 }
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 9)
             Divider()
+            HStack(spacing: 8) {
+                Text("按键名").frame(width: 89, alignment: .leading)
+                ForEach(["单击", "双击", "长按"], id: \.self) { title in
+                    Text(title).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 15)
+            .frame(height: 27)
+            Divider()
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(RemoteKey.xiaomi) { key in
+                        ForEach(model.keys) { key in
                             row(key).id(key.id)
-                            if key.id != RemoteKey.xiaomi.last?.id {
+                            if key.id != model.keys.last?.id {
                                 Divider()
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 2)
                             }
                         }
                     }
                     .padding(.horizontal, 13)
-                    .padding(.vertical, 7)
+                    .padding(.vertical, 3)
                 }
                 .onChange(of: model.slot) { _, slot in
-                    if systemPickerSlot != slot { systemPickerSlot = nil }
+                    if let key = model.keys.first(where: { $0.id == slot }),
+                       let systemPickerSlot, !key.actionSlots.contains(systemPickerSlot) { self.systemPickerSlot = nil }
                     proxy.scrollTo(slot)
                 }
             }
             mappingFooter
         }
         .frame(maxHeight: .infinity)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color(nsColor: .controlBackgroundColor), ignoresSafeAreaEdges: .top)
     }
 
     private func row(_ key: RemoteKey) -> some View {
         let selected = model.slot == key.id
         let phase = model.hardwarePress.flatMap { $0.key == key.id ? $0.phase : nil }
-        let isPower = key.id == "power"
-        return HStack(alignment: .top, spacing: 8) {
-            HStack(spacing: 3) {
-                Button {
-                    model.selectSlot(key.id)
-                } label: {
-                    Label {
-                        Text(key.name).fontWeight(selected ? .semibold : .regular)
-                    } icon: {
-                        Image(systemName: key.symbol).frame(width: 16)
-                    }
-                    .font(mappingFont)
-                    .foregroundStyle(selected ? accent : .primary)
-                    .contentShape(Rectangle())
+        return HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Button { model.selectSlot(key.id) } label: {
+                    Label(key.name, systemImage: key.symbol)
+                        .font(mappingFont.weight(selected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .foregroundStyle(selected ? accent : .primary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
-                .frame(width: 69, alignment: .leading)
-                HStack(spacing: 3) {
-                    if let phase {
-                        Image(systemName: phase.indicatorSymbol).accessibilityHidden(true)
-                        Text(phase.indicatorTitle)
-                    }
-                }
-                .font(.caption2)
-                .foregroundStyle(phase?.indicatorColor ?? .secondary)
-                .lineLimit(1)
-                .frame(width: 46, alignment: .leading)
-            }
-            .frame(minHeight: 24)
-            VStack(spacing: 3) {
-                mappingControl(key, slot: key.id, prefix: isPower ? "短按" : nil)
-                if isPower {
-                    mappingControl(key, slot: "power-long", prefix: "长按")
+                Spacer(minLength: 0)
+                if let conflict = model.calibrationConflict, conflict.target == key.id {
+                    conflictBadge(conflict)
+                } else if let phase {
+                    Image(systemName: phase.indicatorSymbol)
+                        .font(.caption2)
+                        .foregroundStyle(phase.indicatorColor)
+                        .help(phase.indicatorTitle)
+                        .accessibilityLabel(phase.indicatorTitle)
+                        .frame(width: 16)
+                } else {
+                    Color.clear.frame(width: 16).accessibilityHidden(true)
                 }
             }
-            .padding(.leading, 24)
+            .frame(width: 89)
+            mappingControl(key, slot: key.id, gesture: "单击")
+            gestureCell(key, slot: key.doubleSlot, gesture: "双击", supported: key.doublePress == true)
+            gestureCell(key, slot: key.holdSlot, gesture: "长按", supported: key.longPress == true)
         }
-        .padding(.vertical, 3)
-        .frame(minHeight: 32)
-        .padding(.horizontal, 9)
-        .background(phase?.indicatorColor.opacity(0.13) ?? .clear, in: RoundedRectangle(cornerRadius: 7))
+        .padding(.horizontal, 2)
+        .frame(height: 31)
+        .background(selected ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 5))
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: phase)
     }
 
-    private func mappingControl(_ key: RemoteKey, slot: String, prefix: String?) -> some View {
+    private func conflictBadge(_ conflict: RemoteModel.CalibrationConflict) -> some View {
+        let previous = model.keys.first { $0.id == conflict.previous }?.name ?? conflict.previous
+        let target = model.keys.first { $0.id == conflict.target }?.name ?? conflict.target
+        return Button { showsCalibrationConflict.toggle() } label: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(permissionColor)
+                .font(.caption)
+                .frame(width: 16, height: 24)
+        }
+        .buttonStyle(.plain)
+        .help("按键信号已绑定到「\(previous)」")
+        .accessibilityLabel("处理按键信号冲突")
+        .popover(isPresented: $showsCalibrationConflict) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("按键信号冲突", systemImage: "exclamationmark.triangle").font(.headline)
+                Text("这个信号已绑定到「\(previous)」。")
+                HStack {
+                    Button("保留原绑定") { resolveConflict(transfer: false) }
+                    Button("转移到「\(target)」") { resolveConflict(transfer: true) }
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    private func resolveConflict(transfer: Bool) {
+        showsCalibrationConflict = false
+        model.resolveCalibrationConflict(transfer: transfer)
+    }
+
+    @ViewBuilder
+    private func gestureCell(_ key: RemoteKey, slot: String, gesture: String, supported: Bool) -> some View {
+        if supported {
+            mappingControl(key, slot: slot, gesture: gesture)
+                .disabled(model.editableActions[key.id] == .dictation)
+        } else {
+            Color.clear.frame(maxWidth: .infinity).accessibilityHidden(true)
+        }
+    }
+
+    private func mappingControl(_ key: RemoteKey, slot: String, gesture: String) -> some View {
         let action = model.editableActions[slot]
+        let nativeNote = slot == key.id ? "" : "。macOS 仍可能响应实体键的原生操作。"
         return Menu {
-            Button("不分配动作") { choose(nil, for: key, slot: slot) }
+            actionItem(nil, for: key, slot: slot)
             Section("ChatGPT") {
                 actionItem(.openApp, for: key, slot: slot)
                 actionItem(.shortcut(AgentProfile.newChat), for: key, slot: slot)
                 actionItem(.shortcut(AgentProfile.sendDraft), for: key, slot: slot)
                 actionItem(.shortcut(AgentProfile.stop), for: key, slot: slot)
-                if key.id != "power" { actionItem(.dictation, for: key, slot: slot) }
+                if slot == key.id {
+                    actionItem(.dictation, for: key, slot: slot)
+                        .disabled(model.editableActions[key.doubleSlot] != nil || model.editableActions[key.holdSlot] != nil)
+                }
             }
             Section("macOS") {
-                ForEach([AgentAction.displaySleep, .lockScreen, .appSwitcher, .showDesktop, .volumeUp, .volumeDown, .appleMenu, .mediaChooser],
+                ForEach([AgentAction.toggleDisplays, .displaySleep, .lockScreen, .appSwitcher, .showDesktop, .volumeUp, .volumeDown, .appleMenu, .mediaChooser],
                         id: \.title) { option in
                     actionItem(option, for: key, slot: slot)
                 }
-                Button("选择系统快捷键…") {
+                Button {
                     model.selectSlot(key.id)
                     systemPickerSlot = slot
                     refreshHotKeys()
+                } label: {
+                    Label("选择系统快捷键…", systemImage: "command")
                 }
             }
             Section("键盘按键") {
@@ -313,30 +416,24 @@ struct Workspace: View {
                 }
             }
         } label: {
-            Text(action.map(actionLabel) ?? "不分配动作")
+            Label(action.map(compactActionLabel) ?? "无操作", systemImage: action?.mappingSymbol ?? "minus.circle")
                 .font(mappingFont)
+                .foregroundStyle(action == nil ? .secondary : .primary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .controlSize(.regular)
-        .frame(minHeight: 24)
-        .accessibilityLabel("\(key.name)\(prefix ?? "")的功能")
-        .help(action.map { $0 == .displaySleep ? ($0.detail ?? actionLabel($0)) : actionLabel($0) } ?? "不分配动作")
-        .overlay(alignment: .leading) {
-            if let prefix {
-                Text(prefix).font(.caption2).foregroundStyle(.secondary)
-                    .fixedSize().offset(x: -27).allowsHitTesting(false).accessibilityHidden(true)
-            }
-        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel("\(key.name)\(gesture)的功能")
+        .accessibilityValue(action.map(actionLabel) ?? "无操作")
+        .help((action?.detail ?? action.map(actionLabel) ?? "无操作") + nativeNote)
     }
 
-    private func actionItem(_ action: AgentAction, for key: RemoteKey, slot: String) -> some View {
-        Button { choose(action, for: key, slot: slot) } label: {
-            if action == model.editableActions[slot] {
-                Label(actionLabel(action), systemImage: "checkmark")
-            } else {
-                Text(actionLabel(action))
-            }
+    private func actionItem(_ action: AgentAction?, for key: RemoteKey, slot: String) -> some View {
+        Toggle(isOn: Binding(get: { action == model.editableActions[slot] },
+                             set: { _ in choose(action, for: key, slot: slot) })) {
+            Label(action.map(actionLabel) ?? "无操作", systemImage: action?.mappingSymbol ?? "minus.circle")
         }
     }
 
@@ -347,12 +444,12 @@ struct Workspace: View {
     }
 
     private var mappingFooter: some View {
-        let key = RemoteKey.xiaomi.first { $0.id == model.slot } ?? RemoteKey.xiaomi[0]
+        let key = model.keys.first { $0.id == model.slot } ?? model.keys[0]
         let learned = model.editableRemote?.input(for: key.id)
         let action = model.editableActions[key.id]
         let detail = footerDetail(for: key, action: action, learned: learned)
         return VStack(alignment: .leading, spacing: 0) {
-            if let slot = systemPickerSlot, slot == key.id || (key.id == "power" && slot == "power-long") {
+            if let slot = systemPickerSlot, key.actionSlots.contains(slot) {
                 systemShortcuts(for: key, slot: slot)
                     .padding(.horizontal, 15)
                     .padding(.vertical, 6)
@@ -392,7 +489,7 @@ struct Workspace: View {
                 }
                 .modifier(FooterGlassSurface())
                 footerButton("保存", action: saveProfile)
-                    .disabled(!model.hasConfigurationChanges || model.learning != nil)
+                    .disabled(!model.hasConfigurationChanges || model.learning != nil || model.calibrationConflict != nil)
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 10)
@@ -462,7 +559,9 @@ struct Workspace: View {
             if let hotKeys, !hotKeys.isEmpty {
                 Menu("选择已启用的快捷键") {
                     ForEach(hotKeys, id: \.self) { shortcut in
-                        Button(shortcut.label) { choose(.systemShortcut(shortcut), for: key, slot: slot) }
+                        Button { choose(.systemShortcut(shortcut), for: key, slot: slot) } label: {
+                            Label(shortcut.label, systemImage: "command")
+                        }
                     }
                 }
             } else {
@@ -573,6 +672,20 @@ struct Workspace: View {
         .frame(width: 350)
     }
 
+    private func importRemoteModel() {
+        let panel = NSOpenPanel()
+        panel.title = "导入遥控器型号包"
+        panel.message = "选择包含 manifest.json、layout.json、inputs.json 和机身 PNG 的文件夹。"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try model.installModel(from: url)
+        } catch {
+            model.reportError("型号包导入失败：\(error.localizedDescription)")
+        }
+    }
+
     private func exportProfile() {
         guard let profile = model.profile else { return }
         let panel = NSSavePanel()
@@ -597,6 +710,14 @@ struct Workspace: View {
         }
     }
 
+    private func compactActionLabel(_ action: AgentAction) -> String {
+        switch action {
+        case .toggleDisplays: "切换显示器"
+        case .mediaChooser: "媒体选择器"
+        default: actionLabel(action)
+        }
+    }
+
     private func actionLabel(_ action: AgentAction) -> String {
         switch action {
         case let .shortcut(keys): keys.label
@@ -608,17 +729,22 @@ struct Workspace: View {
 
 private struct WorkspacePopoverAction: View {
     let title: String
+    let symbol: String?
     let action: () -> Void
     @State private var hovered = false
 
-    init(_ title: String, action: @escaping () -> Void) {
+    init(_ title: String, symbol: String? = nil, action: @escaping () -> Void) {
         self.title = title
+        self.symbol = symbol
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            Text(title)
+            HStack(spacing: 7) {
+                if let symbol { Image(systemName: symbol).frame(width: 14) }
+                Text(title)
+            }
                 .foregroundStyle(hovered ? Color.white : Color.primary)
                 .padding(.horizontal, 9)
                 .frame(minWidth: 86, maxWidth: .infinity, minHeight: 25, alignment: .leading)
@@ -691,12 +817,13 @@ struct ConfigurationResponseSwitch: View {
     }
 }
 
-private extension RemoteModel.HardwarePress.Phase {
+extension RemoteModel.HardwarePress.Phase {
     var indicatorTitle: String {
         switch self {
         case .down: "按下"
         case .holding: "长按中"
-        case .shortPress: "短按"
+        case .shortPress: "单击"
+        case .doublePress: "双击"
         case .longPress: "长按"
         }
     }
@@ -705,14 +832,35 @@ private extension RemoteModel.HardwarePress.Phase {
         switch self {
         case .down: "circle.fill"
         case .holding: "waveform"
-        case .shortPress, .longPress: "checkmark.circle.fill"
+        case .shortPress, .doublePress, .longPress: "checkmark.circle.fill"
         }
     }
 
     var indicatorColor: Color {
         switch self {
-        case .down, .shortPress: .green
+        case .down, .shortPress, .doublePress: .green
         case .holding, .longPress: .teal
+        }
+    }
+}
+
+private extension AgentAction {
+    var mappingSymbol: String {
+        switch self {
+        case .openApp: "bubble.left"
+        case .openLink: "link"
+        case .shortcut, .systemShortcut: "command"
+        case .foregroundKey: "keyboard"
+        case .chatBar: "text.bubble"
+        case .nextAgent, .appSwitcher: "rectangle.on.rectangle"
+        case .dictation: "mic"
+        case .displaySleep, .toggleDisplays: "display"
+        case .appleMenu: "apple.logo"
+        case .lockScreen: "lock"
+        case .showDesktop: "macwindow"
+        case .volumeUp: "speaker.plus"
+        case .volumeDown: "speaker.minus"
+        case .mediaChooser: "play.rectangle"
         }
     }
 }

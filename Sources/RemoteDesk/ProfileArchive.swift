@@ -4,10 +4,12 @@ import RemoteCore
 struct ProfileArchive: Codable {
     let version: Int
     let name: String
+    let modelID: String?
     let actions: [String: AgentAction]
 
     init(_ profile: AgentProfile) {
-        version = 1
+        version = profile.modelID == nil ? 1 : 2
+        modelID = profile.modelID
         name = profile.name
         actions = profile.actions
     }
@@ -19,8 +21,8 @@ struct ProfileArchive: Codable {
             throw CocoaError(.fileReadCorruptFile)
         }
         let archive = try JSONDecoder().decode(Self.self, from: data)
-        let slots = Set(RemoteKey.xiaomi.map(\.id) + ["power-long"])
-        guard archive.version == 1, archive.actions.keys.allSatisfy(slots.contains) else {
+        guard (archive.version == 1 && archive.modelID == nil) ||
+                (archive.version == 2 && archive.modelID != nil) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         return archive

@@ -55,8 +55,21 @@
           "status": "needs-review"
         }
       ]
+    },
+    "遥控台 · 按键手势工作台": {
+      "versions": [
+        {
+          "path": "gesture-workbench.html",
+          "createdAt": "2026-11-05T03:17:21.212Z",
+          "status": "changes-requested",
+          "viewport": {
+            "width": 1300,
+            "height": 650
+          }
+        }
+      ]
     }
   },
   "createdAt": "2026-11-04T08:29:13.647Z",
-  "updatedAt": "2026-11-04T15:34:17.228Z"
+  "updatedAt": "2026-11-05T03:22:52.676Z"
 }
