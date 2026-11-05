@@ -54,11 +54,11 @@ final class DisplayToggle {
         let hasBuiltIn = hardware.hasBuiltIn()
         if hasBuiltIn {
             guard let brightness = hardware.readBrightness() else {
-                throw DisplayFailure(message: "无法读取内置显示器亮度。")
+                throw DisplayFailure(message: L10n.tr("无法读取内置显示器亮度。"))
             }
             savedBrightness = brightness
             guard hardware.writeBrightness(0) else {
-                throw DisplayFailure(message: "无法调低内置显示器亮度。再按一次可尝试恢复。")
+                throw DisplayFailure(message: L10n.tr("无法调低内置显示器亮度。再按一次可尝试恢复。"))
             }
         }
 
@@ -76,10 +76,10 @@ final class DisplayToggle {
             if !sent || state != 4 { unconfirmed += 1 }
         }
         if unconfirmed > 0 {
-            throw DisplayFailure(message: "\(unconfirmed) 台外接显示器未确认关闭。")
+            throw DisplayFailure(message: L10n.format("%@ 台外接显示器未确认关闭。", String(describing: unconfirmed)))
         }
         if !hasBuiltIn && pendingDisplays.isEmpty {
-            throw DisplayFailure(message: "未找到可控制的显示器。")
+            throw DisplayFailure(message: L10n.tr("未找到可控制的显示器。"))
         }
     }
 
@@ -97,9 +97,9 @@ final class DisplayToggle {
         }
         pendingDisplays = unavailable
         if savedBrightness != nil || !unavailable.isEmpty {
-            let brightness = savedBrightness == nil ? [] : ["内置显示器亮度"]
-            let displays = unavailable.isEmpty ? [] : ["\(unavailable.count) 台外接显示器"]
-            throw DisplayFailure(message: "未能确认恢复\((brightness + displays).joined(separator: "、"))，可再按一次重试。")
+            let brightness = savedBrightness == nil ? [] : [L10n.tr("内置显示器亮度")]
+            let displays = unavailable.isEmpty ? [] : [L10n.format("%@ 台外接显示器", String(describing: unavailable.count))]
+            throw DisplayFailure(message: L10n.format("未能确认恢复%@，可再按一次重试。", String(describing: (brightness + displays).formatted(.list(type: .and).locale(L10n.locale)))))
         }
     }
 

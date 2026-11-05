@@ -164,7 +164,7 @@ final class HIDMonitor: RemoteInputSource {
         let vendor = IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? Int ?? 0
         let product = IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int ?? 0
         let serial = IOHIDDeviceGetProperty(device, kIOHIDSerialNumberKey as CFString) as? String
-        let identity = DeviceID(vendor: vendor, product: product, name: name ?? "未命名蓝牙设备",
+        let identity = DeviceID(vendor: vendor, product: product, name: name ?? L10n.tr("未命名蓝牙设备"),
                                 serial: serial?.isEmpty == false ? serial : nil)
         let location = IOHIDDeviceGetProperty(device, kIOHIDLocationIDKey as CFString) as? Int
         let previous = endpoints.updateValue(.init(identity: identity, device: device, location: location),

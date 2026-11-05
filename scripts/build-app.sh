@@ -9,16 +9,23 @@ signing_identity="${signing_identity:--}"
 swift build -c release
 build_dir="$(swift build -c release --show-bin-path)"
 bin="$build_dir/RemoteDesk"
-app="dist/RemoteDesk.app"
+app="dist/Infinite Remote.app"
 mkdir -p dist
 stage=$(mktemp -d dist/.remotedesk-build.XXXXXX)
 trap 'rm -rf "$stage"' EXIT
-staged_app="$stage/RemoteDesk.app"
+staged_app="$stage/Infinite Remote.app"
 mkdir -p "$staged_app/Contents/MacOS" "$staged_app/Contents/Resources"
-ditto "$build_dir/RemoteDesk_RemoteDesk.bundle" "$staged_app/Contents/Resources/RemoteDesk_RemoteDesk.bundle"
+ditto "$build_dir/Infinite Remote_RemoteDesk.bundle" "$staged_app/Contents/Resources/Infinite Remote_RemoteDesk.bundle"
+# Incremental SwiftPM outputs can retain removed resources. Never ship legacy models.
+rm -rf "$staged_app/Contents/Resources/Infinite Remote_RemoteDesk.bundle/RemoteModels"
 install -m 755 "$bin" "$staged_app/Contents/MacOS/RemoteDesk"
 install -m 644 scripts/RemoteDesk.icns "$staged_app/Contents/Resources/RemoteDesk.icns"
 install -m 644 scripts/Info.plist "$staged_app/Contents/Info.plist"
+install -m 644 LICENSE "$staged_app/Contents/Resources/LICENSE.txt"
+for locale in en zh-Hans; do
+    mkdir -p "$staged_app/Contents/Resources/$locale.lproj"
+    install -m 644 "Sources/RemoteDesk/Resources/Localization/$locale.lproj/InfoPlist.strings" "$staged_app/Contents/Resources/$locale.lproj/InfoPlist.strings"
+done
 if [[ "$signing_identity" == "-" ]]; then
     printf '%s\n' 'Using ad hoc signing. Set REMOTEDESK_SIGNING_IDENTITY to keep macOS privacy permissions across rebuilds.' >&2
 fi
@@ -35,7 +42,7 @@ let destination = CommandLine.arguments[2]
 if renameatx_np(AT_FDCWD, source, AT_FDCWD, destination, UInt32(RENAME_EXCL)) != 0 {
     guard errno == EEXIST,
           renameatx_np(AT_FDCWD, source, AT_FDCWD, destination, UInt32(RENAME_SWAP)) == 0 else {
-        perror("Publishing RemoteDesk.app")
+        perror("Publishing Infinite Remote.app")
         exit(EXIT_FAILURE)
     }
 }

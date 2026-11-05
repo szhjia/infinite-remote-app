@@ -1,0 +1,3 @@
+"CFBundleName" = "无限遥控器";
+"CFBundleDisplayName" = "无限遥控器";
+"NSInputMonitoringUsageDescription" = "无限遥控器读取所选蓝牙遥控器的按键信号，用于录入按键与触发 Agent 动作。";

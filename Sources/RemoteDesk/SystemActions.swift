@@ -11,11 +11,11 @@ enum SystemActions {
 
         var errorDescription: String? {
             switch self {
-            case .hotKeysUnavailable: "暂时无法读取 macOS 快捷键。"
-            case .shortcutChanged: "此快捷键已改绑或停用，请重新选择。"
-            case .appleMenuUnavailable: "当前无法打开苹果菜单。"
-            case .displaySleepFailed: "macOS 未能关闭显示器。"
-            case .permission: "此动作需要「辅助功能」权限。"
+            case .hotKeysUnavailable: L10n.tr("暂时无法读取 macOS 快捷键。")
+            case .shortcutChanged: L10n.tr("此快捷键已改绑或停用，请重新选择。")
+            case .appleMenuUnavailable: L10n.tr("当前无法打开苹果菜单。")
+            case .displaySleepFailed: L10n.tr("macOS 未能关闭显示器。")
+            case .permission: L10n.tr("此动作需要「辅助功能」权限。")
             }
         }
     }
@@ -114,12 +114,12 @@ extension SystemHotKey {
             + (flags.contains(.maskShift) ? "⇧" : "")
             + (flags.contains(.maskCommand) ? "⌘" : "")
         let special: [UInt16: String] = [
-            36: "↵", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc", 76: "⌤", 115: "↖", 116: "⇞",
+            36: "↵", 48: "⇥", 49: L10n.tr("空格"), 51: "⌫", 53: "Esc", 76: "⌤", 115: "↖", 116: "⇞",
             117: "⌦", 119: "↘", 121: "⇟", 123: "←", 124: "→", 125: "↓", 126: "↑"
         ]
         let functionCodes: [UInt16] = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90]
         let function = functionCodes.firstIndex(of: keyCode).map { "F\($0 + 1)" }
-        return modifiers + (special[keyCode] ?? function ?? translatedKey ?? "键码 \(keyCode)")
+        return modifiers + (special[keyCode] ?? function ?? translatedKey ?? L10n.format("键码 %@", String(describing: keyCode)))
     }
 
     @MainActor

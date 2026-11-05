@@ -2,7 +2,8 @@
 import PackageDescription
 
 let package = Package(
-    name: "RemoteDesk",
+    name: "Infinite Remote",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "RemoteCore", targets: ["RemoteCore"]),
@@ -11,11 +12,11 @@ let package = Package(
     targets: [
         .target(name: "RemoteCore"),
         .executableTarget(name: "RemoteDesk", dependencies: ["RemoteCore"], resources: [
-            .copy("Resources/RemoteModels"),
             .process("Resources/CommandBridge.xcassets"),
+            .process("Resources/Localization"),
             .copy("Resources/LICENSE-Tabler.txt")
         ]),
         .testTarget(name: "RemoteCoreTests", dependencies: ["RemoteCore"]),
-        .testTarget(name: "RemoteDeskTests", dependencies: ["RemoteDesk", "RemoteCore"])
+        .testTarget(name: "RemoteDeskTests", dependencies: ["RemoteDesk", "RemoteCore"], resources: [.copy("Fixtures")])
     ]
 )

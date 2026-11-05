@@ -6,6 +6,10 @@ import Testing
 @Test @MainActor
 func draggingDockedRemoteMovesBothWindows() throws {
     _ = NSApplication.shared
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = fixtureRemoteModel(hid: HIDMonitor(), storeURL: directory.appending(path: "configuration.json"),
+                                   runAction: { _, _ in })
     let workspace = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 400),
                              styleMask: [.titled], backing: .buffered, defer: false)
     let remote = NSWindow(contentRect: NSRect(x: 500, y: 100, width: 160, height: LiveRemoteView.preferredHeight),
@@ -19,7 +23,7 @@ func draggingDockedRemoteMovesBothWindows() throws {
     }
     remote.isMovable = false
     let host = NSHostingView(rootView: LiveRemoteView(
-        model: RemoteModel(), workspaceVisible: { true }, toggleWorkspace: {},
+        model: model, workspaceVisible: { true }, toggleWorkspace: {},
         isAlwaysOnTop: .constant(false), hideModel: {}, confirmQuit: {}
     ))
     remote.contentView = host

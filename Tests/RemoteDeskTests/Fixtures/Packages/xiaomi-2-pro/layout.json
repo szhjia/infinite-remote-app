@@ -10,7 +10,10 @@
   "keys": [
     {
       "id": "power",
-      "name": "电源",
+      "name": {
+        "en": "Power",
+        "zh": "电源"
+      },
       "symbol": "power",
       "shape": {
         "kind": "ellipse",
@@ -20,11 +23,15 @@
         "height": 0.055
       },
       "longPress": true,
-      "doublePress": true
+      "doublePress": true,
+      "annotationSide": "leading"
     },
     {
       "id": "voice",
-      "name": "语音",
+      "name": {
+        "en": "Voice",
+        "zh": "语音"
+      },
       "symbol": "mic",
       "shape": {
         "kind": "ellipse",
@@ -32,11 +39,15 @@
         "y": 0.115,
         "width": 0.166,
         "height": 0.055
-      }
+      },
+      "annotationSide": "trailing"
     },
     {
       "id": "up",
-      "name": "方向上",
+      "name": {
+        "en": "Up",
+        "zh": "方向上"
+      },
       "symbol": "chevron.up",
       "shape": {
         "kind": "sector",
@@ -48,11 +59,15 @@
         "innerRatio": 0.53
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "leading"
     },
     {
       "id": "down",
-      "name": "方向下",
+      "name": {
+        "en": "Down",
+        "zh": "方向下"
+      },
       "symbol": "chevron.down",
       "shape": {
         "kind": "sector",
@@ -64,11 +79,15 @@
         "innerRatio": 0.53
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "trailing"
     },
     {
       "id": "left",
-      "name": "方向左",
+      "name": {
+        "en": "Left",
+        "zh": "方向左"
+      },
       "symbol": "chevron.left",
       "shape": {
         "kind": "sector",
@@ -80,11 +99,15 @@
         "innerRatio": 0.53
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "leading"
     },
     {
       "id": "right",
-      "name": "方向右",
+      "name": {
+        "en": "Right",
+        "zh": "方向右"
+      },
       "symbol": "chevron.right",
       "shape": {
         "kind": "sector",
@@ -96,11 +119,15 @@
         "innerRatio": 0.53
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "trailing"
     },
     {
       "id": "ok",
-      "name": "确认",
+      "name": {
+        "en": "Confirm",
+        "zh": "确认"
+      },
       "symbol": "circle.inset.filled",
       "shape": {
         "kind": "ellipse",
@@ -110,11 +137,15 @@
         "height": 0.106
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "trailing"
     },
     {
       "id": "back",
-      "name": "返回",
+      "name": {
+        "en": "Back",
+        "zh": "返回"
+      },
       "symbol": "chevron.left",
       "shape": {
         "kind": "ellipse",
@@ -124,11 +155,15 @@
         "height": 0.078
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "leading"
     },
     {
       "id": "home",
-      "name": "主页",
+      "name": {
+        "en": "Home",
+        "zh": "主页"
+      },
       "symbol": "house",
       "shape": {
         "kind": "ellipse",
@@ -138,11 +173,15 @@
         "height": 0.078
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "leading"
     },
     {
       "id": "plus",
-      "name": "音量加",
+      "name": {
+        "en": "Volume up",
+        "zh": "音量加"
+      },
       "symbol": "plus",
       "shape": {
         "kind": "ellipse",
@@ -152,11 +191,15 @@
         "height": 0.078
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "trailing"
     },
     {
       "id": "minus",
-      "name": "音量减",
+      "name": {
+        "en": "Volume down",
+        "zh": "音量减"
+      },
       "symbol": "minus",
       "shape": {
         "kind": "ellipse",
@@ -164,11 +207,15 @@
         "y": 0.505,
         "width": 0.235,
         "height": 0.078
-      }
+      },
+      "annotationSide": "trailing"
     },
     {
       "id": "menu",
-      "name": "菜单",
+      "name": {
+        "en": "Menu",
+        "zh": "菜单"
+      },
       "symbol": "line.3.horizontal",
       "shape": {
         "kind": "ellipse",
@@ -178,11 +225,15 @@
         "height": 0.078
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "leading"
     },
     {
       "id": "tv",
-      "name": "直播",
+      "name": {
+        "en": "Live TV",
+        "zh": "直播"
+      },
       "symbol": "tv",
       "shape": {
         "kind": "ellipse",
@@ -192,7 +243,8 @@
         "height": 0.078
       },
       "doublePress": true,
-      "longPress": true
+      "longPress": true,
+      "annotationSide": "trailing"
     }
   ],
   "anchors": [
@@ -204,7 +256,8 @@
         "y": 0.748,
         "width": 0.11,
         "height": 0.038
-      }
+      },
+      "annotationSide": "leading"
     }
   ]
 }

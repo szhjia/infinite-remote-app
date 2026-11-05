@@ -20,13 +20,13 @@ struct RemoteDeskApp: App {
     private var trayStatus: (asset: String, description: String) {
         let model = windows.model
         return if !model.isEnabled {
-            ("BridgePaused", "遥控台 · 已暂停")
+            ("BridgePaused", L10n.tr("无限遥控器 · 已暂停"))
         } else if !model.canReadKeys {
-            ("BridgeIdle", "遥控台 · 未监听")
+            ("BridgeIdle", L10n.tr("无限遥控器 · 未监听"))
         } else if model.isDiagnosing || model.learning != nil {
-            ("BridgePaused", "遥控台 · 暂停触发")
+            ("BridgePaused", L10n.tr("无限遥控器 · 暂停触发"))
         } else {
-            ("BridgeListening", "遥控台 · 正在监听")
+            ("BridgeListening", L10n.tr("无限遥控器 · 正在监听"))
         }
     }
 }
@@ -36,13 +36,13 @@ private struct TrayMenu: View {
     let windows: RemoteWindows
 
     var body: some View {
-        Button(windows.isWorkspaceVisible ? "隐藏工作台" : "显示工作台") {
+        Button(windows.isWorkspaceVisible ? L10n.tr("隐藏工作台") : L10n.tr("显示工作台")) {
             windows.setWorkspaceVisible(!windows.isWorkspaceVisible)
         }
-        Button(windows.isRemoteModelVisible ? "隐藏遥控器模型" : "显示遥控器模型") {
+        Button((windows.isRemoteModelVisible && model.hasRemote) ? L10n.tr("隐藏遥控器模型") : L10n.tr("显示遥控器模型")) {
             windows.toggleRemoteModel()
-        }
-        Toggle("响应遥控器", isOn: $model.isEnabled)
+        }.disabled(!model.hasRemote)
+        Toggle(L10n.tr("响应遥控器"), isOn: $model.isEnabled)
         Divider()
         if let dictationStatus = model.dictation.phase.message {
             Text(dictationStatus)
@@ -51,13 +51,13 @@ private struct TrayMenu: View {
             windows.showDiagnostics()
         } label: {
             Label {
-                Text("按键诊断…")
+                Text(L10n.tr("按键诊断…"))
             } icon: {
                 Image("BridgeDiagnostics", bundle: .module)
             }
         }
         Divider()
-        Button("退出遥控台") { NSApp.terminate(nil) }
+        Button(L10n.tr("退出无限遥控器")) { NSApp.terminate(nil) }
     }
 }
 
@@ -104,8 +104,8 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard Int(event.keyCode) == kVK_ContextualMenu,
                   let self, let remote = self.remote, event.window === remote,
                   self.model.isEnabled, self.model.canReadKeys,
-                  self.model.remoteDefinition.id == RemoteDefinition.xiaomiID else { return event }
-            // RC003's Menu key also arrives through HID. Let that path own the
+                  self.model.consumesContextMenu else { return event }
+            // The package declares native Menu handling through HID. Let that path own the
             // action instead of opening the model's SwiftUI context menu.
             return nil
         }
@@ -161,7 +161,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let window = configurationWindow()
         if NSApp.isHidden { NSApp.unhide(nil) }
         if window.isMiniaturized { window.deminiaturize(nil) }
-        if isRemoteModelVisible { layoutRemote(nextTo: window, fitToScreen: true) }
+        if isRemoteModelVisible && model.hasRemote { layoutRemote(nextTo: window, fitToScreen: true) }
         present(window)
         updateWorkspaceVisibility()
         UserDefaults.standard.set(true, forKey: Self.workspaceVisibilityKey)
@@ -187,7 +187,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateRemoteAttachment() {
-        guard isRemoteModelVisible else {
+        guard isRemoteModelVisible && model.hasRemote else {
             if let remote {
                 remote.parent?.removeChildWindow(remote)
                 remote.orderOut(nil)
@@ -239,7 +239,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let window = BorderlessRemoteWindow(
             contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false
         )
-        window.title = "遥控器"
+        window.title = L10n.tr("遥控器")
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
@@ -269,27 +269,51 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func confirmQuitFromRemote() {
         let alert = NSAlert()
-        alert.messageText = "退出 RemoteDesk？"
+        alert.messageText = L10n.tr("退出无限遥控器？")
         alert.informativeText = model.hasConfigurationChanges
-            ? "退出后将停止监听遥控器，未保存的配置更改也会丢失。"
-            : "退出后将停止监听遥控器。"
-        alert.addButton(withTitle: "取消").keyEquivalent = "\u{1B}"
-        alert.addButton(withTitle: "退出").hasDestructiveAction = true
+            ? L10n.tr("退出后将停止监听遥控器，未保存的配置更改也会丢失。")
+            : L10n.tr("退出后将停止监听遥控器。")
+        alert.addButton(withTitle: L10n.tr("取消")).keyEquivalent = "\u{1B}"
+        alert.addButton(withTitle: L10n.tr("退出")).hasDestructiveAction = true
         NSApp.activate()
         if alert.runModal() == .alertSecondButtonReturn { NSApp.terminate(nil) }
     }
 
     private func configurationWindow() -> NSWindow {
         if let configuration { return configuration }
-        let window = titledWindow("配置工作台", size: Workspace.initialSize,
+        let window = titledWindow(L10n.tr("配置工作台"), size: Workspace.initialSize,
                                   extraStyle: .fullSizeContentView,
-                                  content: Workspace(model: model, mediaSettings: mediaSettings,
-                                                     remoteModelButton: RemoteModelButton(windows: self)) { [weak self] in
+                                  content: Workspace(model: model, mediaSettings: mediaSettings) { [weak self] in
                                       self?.showMedia()
                                   })
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.titleVisibility = .hidden
+        if let zoomButton = window.standardWindowButton(.zoomButton),
+           let titlebar = zoomButton.superview {
+            let brand = NSHostingView(rootView: WorkspaceBrand())
+            brand.translatesAutoresizingMaskIntoConstraints = false
+            titlebar.addSubview(brand)
+            // Follow the native controls rather than assuming a title-bar height.
+            NSLayoutConstraint.activate([
+                brand.leadingAnchor.constraint(equalTo: zoomButton.trailingAnchor, constant: 12),
+                brand.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
+            ])
+            let status = NSHostingView(rootView: HStack(spacing: 8) {
+                ConfigurationConnectionStatus(model: model)
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(width: 1, height: 12)
+                    .accessibilityHidden(true)
+                RemoteModelButton(windows: self)
+            }.fixedSize())
+            status.translatesAutoresizingMaskIntoConstraints = false
+            titlebar.addSubview(status)
+            NSLayoutConstraint.activate([
+                status.trailingAnchor.constraint(equalTo: titlebar.trailingAnchor, constant: -15),
+                status.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
+            ])
+        }
         window.contentMinSize = Workspace.minimumSize
         // Use the native zoom button so the paired windows can stay side by side.
         window.collectionBehavior.insert(.fullScreenNone)
@@ -299,7 +323,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func showDiagnostics() {
         if diagnostics == nil {
-            diagnostics = titledWindow("按键诊断", size: NSSize(width: 540, height: 450),
+            diagnostics = titledWindow(L10n.tr("按键诊断"), size: NSSize(width: 540, height: 450),
                                        content: SignalDiagnostics(model: model) { [weak self] in self?.diagnostics?.close() })
         }
         model.setDiagnosing(true)
@@ -356,7 +380,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame: NSRect) -> NSRect {
-        guard window === configuration, isRemoteModelVisible else { return defaultFrame }
+        guard window === configuration, isRemoteModelVisible, model.hasRemote else { return defaultFrame }
         let reservedWidth = remotePanelWidth(for: min(LiveRemoteView.preferredHeight, defaultFrame.height))
         var frame = defaultFrame
         frame.size.width = max(window.minSize.width, defaultFrame.width - reservedWidth)
@@ -368,7 +392,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func resizeRemoteForModel() {
-        guard let remote else { return }
+        guard let remote else {
+            if isRemoteModelVisible && model.hasRemote { updateRemoteAttachment() }
+            return
+        }
         if let configuration, remote.parent === configuration {
             layoutRemote(nextTo: configuration, fitToScreen: true)
         } else {
@@ -422,11 +449,10 @@ struct RemoteModelButton: View {
     unowned let windows: RemoteWindows
 
     var body: some View {
-        let visible = windows.isRemoteModelVisible
-        let title = visible ? "隐藏遥控器模型" : "显示遥控器模型"
+        let visible = windows.isRemoteModelVisible && windows.model.hasRemote
+        let title = visible ? L10n.tr("隐藏遥控器模型") : L10n.tr("显示遥控器模型")
         Button(action: windows.toggleRemoteModel) {
-            Image(systemName: visible ? "appletvremote.gen4.fill" : "appletvremote.gen4")
-                .font(.system(size: 17, weight: .medium))
+            RemoteControlIcon()
                 .foregroundStyle(visible ? Color.accentColor : .secondary)
                 .frame(width: 28, height: 26)
                 .contentShape(Rectangle())
@@ -434,5 +460,66 @@ struct RemoteModelButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         .help(title)
+        .disabled(!windows.model.hasRemote)
+    }
+}
+
+/// Orbit Remote: native vector artwork on a square canvas.
+private struct RemoteControlIcon: View {
+    var body: some View {
+        ZStack {
+            OrbitRemoteOutline()
+                .stroke(style: StrokeStyle(lineWidth: 1.05, lineCap: .round, lineJoin: .round))
+            OrbitRemoteDirections().fill()
+        }
+        .frame(width: 12, height: 15)
+        .frame(width: 20, height: 20)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct OrbitRemoteOutline: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        // The outer shell joins the direction ring above and below the side gaps.
+        path.move(to: CGPoint(x: 1, y: 12))
+        path.addLine(to: CGPoint(x: 1, y: 8))
+        path.addCurve(to: CGPoint(x: 8, y: 1), control1: CGPoint(x: 1, y: 4), control2: CGPoint(x: 4, y: 1))
+        path.addLine(to: CGPoint(x: 16, y: 1))
+        path.addCurve(to: CGPoint(x: 23, y: 8), control1: CGPoint(x: 20, y: 1), control2: CGPoint(x: 23, y: 4))
+        path.addLine(to: CGPoint(x: 23, y: 12))
+        path.addCurve(to: CGPoint(x: 1, y: 12), control1: CGPoint(x: 20, y: 2.5), control2: CGPoint(x: 4, y: 2.5))
+        path.closeSubpath()
+
+        path.move(to: CGPoint(x: 1, y: 16.5))
+        path.addLine(to: CGPoint(x: 1, y: 22))
+        path.addCurve(to: CGPoint(x: 8, y: 29), control1: CGPoint(x: 1, y: 26), control2: CGPoint(x: 4, y: 29))
+        path.addLine(to: CGPoint(x: 16, y: 29))
+        path.addCurve(to: CGPoint(x: 23, y: 22), control1: CGPoint(x: 20, y: 29), control2: CGPoint(x: 23, y: 26))
+        path.addLine(to: CGPoint(x: 23, y: 16.5))
+        path.addCurve(to: CGPoint(x: 1, y: 16.5), control1: CGPoint(x: 20, y: 26), control2: CGPoint(x: 4, y: 26))
+        path.closeSubpath()
+
+        path.move(to: CGPoint(x: 9, y: 25.5))
+        path.addLine(to: CGPoint(x: 15, y: 25.5))
+        return path.applying(CGAffineTransform(scaleX: rect.width / 24, y: rect.height / 30)
+            .concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
+    }
+}
+
+private struct OrbitRemoteDirections: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for points in [
+            [CGPoint(x: 12, y: 7.5), CGPoint(x: 10.3, y: 10), CGPoint(x: 13.7, y: 10)],
+            [CGPoint(x: 12, y: 21), CGPoint(x: 10.3, y: 18.5), CGPoint(x: 13.7, y: 18.5)],
+            [CGPoint(x: 4.8, y: 14.25), CGPoint(x: 7.3, y: 12.5), CGPoint(x: 7.3, y: 16)],
+            [CGPoint(x: 19.2, y: 14.25), CGPoint(x: 16.7, y: 12.5), CGPoint(x: 16.7, y: 16)]
+        ] {
+            path.addLines(points)
+            path.closeSubpath()
+        }
+        return path.applying(CGAffineTransform(scaleX: rect.width / 24, y: rect.height / 30)
+            .concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
     }
 }

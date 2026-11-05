@@ -30,7 +30,7 @@ struct RemoteArtwork: View {
                     ForEach(definition.layout.anchors, id: \.capability) { anchor in
                         if let capability = definition.manifest.capabilities.first(where: { $0.id == anchor.capability }) {
                             let selected = selectedCapability == capability.id
-                            region(anchor.shape, in: projection, name: capability.name, hint: "查看硬件说明",
+                            region(anchor.shape, in: projection, name: capability.name, hint: L10n.tr("查看硬件说明"),
                                    fill: selected ? .accentColor.opacity(0.45) : .clear, selected: selected) {
                                 inspectCapability(capability.id)
                             }

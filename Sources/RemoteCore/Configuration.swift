@@ -13,6 +13,7 @@ public struct DeviceID: Codable, Hashable, Sendable {
         self.serial = serial
     }
 
+    // Compatibility predicate used only to migrate pre-package configurations.
     public var isSupportedRemote: Bool { vendor == 0x2717 && product == 0x32B8 }
 
     public var modelCode: String { String(format: "%04X:%04X", vendor, product) }
@@ -51,7 +52,7 @@ public struct LearnedKey: Codable, Equatable, Sendable {
 
 public struct RemoteMap: Codable, Equatable, Sendable {
     public let device: DeviceID
-    public var layout: RemoteLayout = .xiaomi2Pro
+    public var layout: RemoteLayout = .generic
     public var keys: [LearnedKey] = []
 
     public mutating func learn(_ code: InputCode, as slot: String) {
@@ -175,18 +176,20 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
 }
 
 public struct Configuration: Codable, Equatable, Sendable {
-    public static let currentVersion = 8
+    public static let currentVersion = 9
     public var version = Self.currentVersion
     public var activeAgentID = AgentProfile.defaults.id
     public var activeAgentIDsByModel: [String: String]?
     public var selectedDevice: DeviceID?
+    public var selectedModelID: String?
     public var remotes: [RemoteMap] = []
     public var agents: [AgentProfile] = []
 
     public init() {}
 
     public mutating func upgradeLegacy() {
-        if version == 6 || version == 7 {
+        if (6...8).contains(version) {
+            migrateModelAssociations()
             version = Self.currentVersion
             return
         }
@@ -197,6 +200,7 @@ public struct Configuration: Codable, Equatable, Sendable {
             if let index = agents.firstIndex(of: previousPreset) {
                 agents[index] = .chatGPT
             }
+            migrateModelAssociations()
             version = Self.currentVersion
             return
         }
@@ -229,7 +233,20 @@ public struct Configuration: Codable, Equatable, Sendable {
             return remote
         }
         if selectedDevice?.isSupportedRemote != true { selectedDevice = nil }
+        migrateModelAssociations()
         version = Self.currentVersion
+    }
+
+    private mutating func migrateModelAssociations() {
+        // The pre-package configuration implicitly belonged to this legacy model.
+        let legacyID = "xiaomi-2-pro"
+        for index in agents.indices where agents[index].modelID == nil { agents[index].modelID = legacyID }
+        if activeAgentIDsByModel?[legacyID] == nil {
+            var ids = activeAgentIDsByModel ?? [:]
+            ids[legacyID] = activeAgentID
+            activeAgentIDsByModel = ids
+        }
+        if selectedModelID == nil, selectedDevice?.isSupportedRemote == true { selectedModelID = legacyID }
     }
 
     public var activeAgent: AgentProfile? {
@@ -238,8 +255,7 @@ public struct Configuration: Codable, Equatable, Sendable {
     }
     public var activeRemote: RemoteMap? { remotes.first { $0.device == selectedDevice } }
 
-    public mutating func selectDevice(_ device: DeviceID, layout: RemoteLayout = .xiaomi2Pro) {
-        guard layout == .generic || device.isSupportedRemote else { return }
+    public mutating func selectDevice(_ device: DeviceID, layout: RemoteLayout = .generic) {
         selectedDevice = device
         if !remotes.contains(where: { $0.device == device }) {
             remotes.append(RemoteMap(device: device, layout: layout))

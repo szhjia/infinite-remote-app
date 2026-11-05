@@ -1,0 +1,106 @@
+[
+  {
+    "key": "power",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 102,
+    "acceptsArray": true
+  },
+  {
+    "key": "voice",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 62,
+    "acceptsArray": true
+  },
+  {
+    "key": "up",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 82,
+    "acceptsArray": true
+  },
+  {
+    "key": "left",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 80,
+    "acceptsArray": true
+  },
+  {
+    "key": "ok",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 40,
+    "acceptsArray": true
+  },
+  {
+    "key": "right",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 79,
+    "acceptsArray": true
+  },
+  {
+    "key": "down",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 81,
+    "acceptsArray": true
+  },
+  {
+    "key": "back",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 241,
+    "acceptsArray": true
+  },
+  {
+    "key": "plus",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 128,
+    "acceptsArray": true
+  },
+  {
+    "key": "home",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 74,
+    "acceptsArray": true
+  },
+  {
+    "key": "minus",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 129,
+    "acceptsArray": true
+  },
+  {
+    "key": "menu",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 101,
+    "acceptsArray": true
+  },
+  {
+    "key": "tv",
+    "collectionPage": 1,
+    "collectionUsage": 6,
+    "page": 7,
+    "usage": 53,
+    "acceptsArray": true
+  }
+]

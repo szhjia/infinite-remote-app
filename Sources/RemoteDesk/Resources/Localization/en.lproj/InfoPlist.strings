@@ -1,0 +1,3 @@
+"CFBundleName" = "Infinite Remote";
+"CFBundleDisplayName" = "Infinite Remote";
+"NSInputMonitoringUsageDescription" = "Infinite Remote reads key signals from the selected Bluetooth remote to learn keys and trigger Agent actions.";

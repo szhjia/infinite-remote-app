@@ -22,13 +22,13 @@ struct DeviceArtworkGuide: View {
                         return press.phase.indicatorColor.opacity(0.55)
                     }
                     return model.slot == key ? Color.accentColor.opacity(0.45) : .clear
-                }, help: { "\($0.name) · 定位" }, activate: model.selectSlot, selectedKey: model.slot,
+                }, help: { L10n.format("%@ · 定位", String(describing: $0.name)) }, activate: model.selectSlot, selectedKey: model.slot,
                    selectedCapability: selectedCapability, inspectCapability: showsGuide ? { selectedCapability = $0 } : nil)
                     .frame(width: artworkSize.width, height: artworkSize.height)
                     .position(x: size.width / 2, y: size.height / 2)
 
                 if showsGuide {
-                    let labels = labels(in: size, projection: projection, offset: offset)
+                    let labels = DeviceArtworkAnnotation.make(definition: definition, in: size, projection: projection, offset: offset)
                     ForEach(labels, id: \.identity) { label in
                         let isSelected = label.capability ? selectedCapability == label.id : model.slot == label.id
                         let rail = label.trailing ? size.width - laneWidth : laneWidth
@@ -54,7 +54,7 @@ struct DeviceArtworkGuide: View {
         .onChange(of: model.remoteDefinition.id) { _, _ in selectedCapability = nil }
     }
 
-    private func labelButton(_ label: Annotation, selected: Bool) -> some View {
+    private func labelButton(_ label: DeviceArtworkAnnotation, selected: Bool) -> some View {
         Button {
             if label.capability {
                 selectedCapability = label.id
@@ -87,34 +87,36 @@ struct DeviceArtworkGuide: View {
         }
     }
 
-    private struct Annotation {
-        let id: String
-        let name: String
-        let anchor: CGPoint
-        let trailing: Bool
-        var capability = false
-        var y: CGFloat
-        var identity: String { (capability ? "capability:" : "key:") + id }
-    }
+}
 
-    private func labels(in size: CGSize, projection: ArtworkProjection, offset: CGPoint) -> [Annotation] {
+struct DeviceArtworkAnnotation {
+    let id: String
+    let name: String
+    let anchor: CGPoint
+    let trailing: Bool
+    var capability = false
+    var y: CGFloat
+    var identity: String { (capability ? "capability:" : "key:") + id }
+
+    static func make(definition: RemoteDefinition, in size: CGSize,
+                     projection: ArtworkProjection, offset: CGPoint) -> [Self] {
         func anchor(_ shape: Hotspot) -> CGPoint {
             let point = projection.center(for: shape)
             return CGPoint(x: offset.x + point.x, y: offset.y + point.y)
         }
-        let xiaomi = model.remoteDefinition.id == RemoteDefinition.xiaomiID
-        var labels = model.keys.map { key in
+        var labels = definition.layout.keys.map { key in
             let point = anchor(key.shape)
-            let trailing = xiaomi && ["ok", "down"].contains(key.id) || point.x > size.width / 2
-            return Annotation(id: key.id, name: key.name, anchor: point, trailing: trailing, y: point.y)
+            let trailing = key.annotationSide.map { $0 == .trailing } ?? (point.x > size.width / 2)
+            return Self(id: key.id, name: key.name, anchor: point, trailing: trailing, y: point.y)
         }
-        for marker in model.remoteDefinition.layout.anchors {
-            guard let capability = model.remoteDefinition.manifest.capabilities.first(where: { $0.id == marker.capability }) else { continue }
+        for marker in definition.layout.anchors {
+            guard let capability = definition.manifest.capabilities.first(where: { $0.id == marker.capability }) else { continue }
             let point = anchor(marker.shape)
-            labels.append(Annotation(id: capability.id, name: capability.name, anchor: point,
-                                     trailing: point.x > size.width / 2, capability: true, y: point.y))
+            labels.append(Self(id: capability.id, name: capability.name, anchor: point,
+                                     trailing: marker.annotationSide.map { $0 == .trailing } ?? (point.x > size.width / 2),
+                                     capability: true, y: point.y))
         }
-        return [false, true].flatMap { trailing -> [Annotation] in
+        return [false, true].flatMap { trailing -> [Self] in
             var lane = labels.filter { $0.trailing == trailing }.sorted { ($0.anchor.y, $0.id) < ($1.anchor.y, $1.id) }
             let spacing = min(22, max(0, size.height - 20) / CGFloat(max(1, lane.count - 1)))
             var previous: CGFloat = 10 - spacing
@@ -137,7 +139,7 @@ struct DeviceCapabilityDetails: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Label(capability.name, systemImage: capability.symbol).font(.headline)
                     Text(capability.description).fixedSize(horizontal: false, vertical: true)
-                    Text(capability.id == "usb-c" ? "硬件具备 · 机身充电" : "硬件具备 · RemoteDesk 未接入")
+                    Text(capability.statusText)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

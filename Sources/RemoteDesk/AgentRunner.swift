@@ -9,10 +9,10 @@ enum AgentRunner {
         case missingApp, permission, unsupportedKey, unsupportedAction
         var errorDescription: String? {
             switch self {
-            case .missingApp: "找不到目标应用。请安装 ChatGPT 桌面端。"
-            case .permission: "发送快捷键需要「辅助功能」权限。"
-            case .unsupportedKey: "这个快捷键不是在 macOS 上录入的，请重新录入。"
-            case .unsupportedAction: "此动作无法在当前配置中执行。"
+            case .missingApp: L10n.tr("找不到目标应用。请安装 ChatGPT 桌面端。")
+            case .permission: L10n.tr("发送快捷键需要「辅助功能」权限。")
+            case .unsupportedKey: L10n.tr("这个快捷键不是在 macOS 上录入的，请重新录入。")
+            case .unsupportedAction: L10n.tr("此动作无法在当前配置中执行。")
             }
         }
     }

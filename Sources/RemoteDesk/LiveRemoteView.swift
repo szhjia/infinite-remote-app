@@ -43,18 +43,18 @@ struct LiveRemoteView: View {
         .overlay(alignment: .topTrailing) {
             if hovering {
                 HStack(spacing: 4) {
-                    windowButton("minus", title: "隐藏遥控器模型", action: hideModel)
-                    windowButton("xmark", title: "退出 RemoteDesk", action: confirmQuit)
+                    windowButton("minus", title: L10n.tr("隐藏遥控器模型"), action: hideModel)
+                    windowButton("xmark", title: L10n.tr("退出无限遥控器"), action: confirmQuit)
                 }
                 .padding(4)
             }
         }
         .contentShape(Rectangle())
         .contextMenu {
-            Text("RemoteDesk · \(model.connectionStatus)")
+            Text(L10n.format("无限遥控器 · %@", String(describing: model.connectionStatus)))
             Divider()
-            Button(workspaceVisible() ? "隐藏工作台" : "显示工作台", action: toggleWorkspace)
-            Toggle("窗口置顶", isOn: $isAlwaysOnTop)
+            Button(workspaceVisible() ? L10n.tr("隐藏工作台") : L10n.tr("显示工作台"), action: toggleWorkspace)
+            Toggle(L10n.tr("窗口置顶"), isOn: $isAlwaysOnTop)
         }
         .onHover { hovering = $0 }
         .onChange(of: model.lastKeyRelease) { _, event in release = event }

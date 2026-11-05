@@ -31,7 +31,7 @@ func hardwareListenerChangesUpdateReadinessWithoutRefreshingPermissions() {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     let input = InputFixture(devices: [remote])
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
 
     model.refreshPermissions()
     model.selectDevice(remote)
@@ -66,7 +66,7 @@ func upgradesOldCodexPresetWithoutChangingLearnedKeysOrCustomizedActions(customi
 
     var old = Configuration()
     old.version = 1
-    old.selectDevice(device)
+    old.selectDevice(device, layout: .xiaomi2Pro)
     old.updateRemote { $0.learn(enter, as: "ok") }
     let custom = KeyboardShortcut(keyCode: 0, modifiers: [.command, .shift], keyName: "A")
     old.activeAgentID = "chatgpt"
@@ -79,13 +79,14 @@ func upgradesOldCodexPresetWithoutChangingLearnedKeysOrCustomizedActions(customi
     let original = try JSONEncoder().encode(old)
     try original.write(to: storeURL)
 
-    let model = RemoteModel(hid: InputFixture(devices: [device]), storeURL: storeURL, runAction: { _, _ in })
+    let model = fixtureRemoteModel(hid: InputFixture(devices: [device]), storeURL: storeURL, runAction: { _, _ in })
     let saved = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: storeURL))
     #expect(saved == model.config)
     #expect(saved.version == Configuration.currentVersion)
     #expect(saved.activeAgentID == "codex")
     #expect(saved.remotes == old.remotes)
     #expect(saved.agents.count == 1)
+    #expect(saved.agents.allSatisfy { $0.modelID == RemoteDefinition.xiaomiID })
     #expect(try Data(contentsOf: storeURL.appendingPathExtension("v1.backup")) == original)
 
     let codex = try #require(saved.activeAgent)
@@ -105,10 +106,10 @@ func restoresLastSavedProfileAndUpdatesOnlyTheOldChatGPTPreset() throws {
     defer { try? FileManager.default.removeItem(at: directory) }
     let storeURL = directory.appending(path: "configuration.json")
     func openModel() -> RemoteModel {
-        RemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
+        fixtureRemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
     }
 
-    #expect(openModel().profile == .defaults)
+    #expect(openModel().profile == legacyModelProfile(.defaults))
 
     var previousPreset = AgentProfile.chatGPT
     previousPreset.actions["power"] = .displaySleep
@@ -124,8 +125,8 @@ func restoresLastSavedProfileAndUpdatesOnlyTheOldChatGPTPreset() throws {
 
     let migrated = openModel()
     #expect(try Data(contentsOf: storeURL.appendingPathExtension("v4.backup")) == original)
-    #expect(migrated.profile == custom)
-    #expect(migrated.profiles.contains(AgentProfile.chatGPT))
+    #expect(migrated.profile == legacyModelProfile(custom))
+    #expect(migrated.profiles.contains(legacyModelProfile(.chatGPT)))
     #expect(migrated.selectProfile(AgentProfile.chatGPT.id))
     #expect(openModel().editableActions["power-long"] == .lockScreen)
 
@@ -133,7 +134,7 @@ func restoresLastSavedProfileAndUpdatesOnlyTheOldChatGPTPreset() throws {
     #expect(migrated.saveConfigurationChanges())
     var editedPreset = AgentProfile.chatGPT
     editedPreset.actions.removeValue(forKey: "power-long")
-    #expect(openModel().profile == editedPreset)
+    #expect(openModel().profile == legacyModelProfile(editedPreset))
 }
 
 @Test @MainActor
@@ -160,9 +161,9 @@ func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws 
         dispatched.append((action, target))
     }
     let input = InputFixture(devices: [xiaomi, other])
-    let model = RemoteModel(hid: input, storeURL: storeURL, runAction: runAction)
+    let model = fixtureRemoteModel(hid: input, storeURL: storeURL, runAction: runAction)
     #expect(try Data(contentsOf: storeURL.appendingPathExtension("v3.backup")) == original)
-    #expect(model.profiles.first == AgentProfile.defaults)
+    #expect(model.profiles.first == legacyModelProfile(.defaults))
 
     model.refreshPermissions()
     model.selectDevice(xiaomi)
@@ -194,7 +195,7 @@ func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws 
     #expect(!model.hasConfigurationChanges)
 
     let reopenedInput = InputFixture(devices: [xiaomi, other])
-    let reopened = RemoteModel(hid: reopenedInput, storeURL: storeURL, runAction: runAction)
+    let reopened = fixtureRemoteModel(hid: reopenedInput, storeURL: storeURL, runAction: runAction)
     #expect(reopenedInput.selectedDevice == xiaomi)
     #expect(reopened.editableRemote?.keys.count == 1)
 
@@ -238,7 +239,7 @@ func unregisteredRemoteCannotEnableVirtualButtons() {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     let input = InputFixture(devices: [xiaomi, other])
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
     model.refreshPermissions()
     #expect(model.connectedDevice == xiaomi)
     #expect(model.connected)
@@ -261,7 +262,7 @@ func diagnosticsSuspendHardwareAndVirtualActionsUntilClosed() async throws {
     let input = InputFixture(devices: [device])
     input.state = .listening
     var dispatched: [AgentAction] = []
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
         dispatched.append(action)
     }
     model.refreshPermissions()
@@ -307,7 +308,7 @@ func powerDispatchesExactlyOneActionAndDropsInterruptedPresses() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     var dispatched: [AgentAction] = []
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             powerHoldDelay: .milliseconds(50)) { action, _ in dispatched.append(action) }
     model.refreshPermissions()
     model.selectSlot("power")
@@ -343,13 +344,14 @@ func namedProfilesAndImportsCannotOverwriteTheBuiltInOrLoseDrafts() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     let storeURL = directory.appending(path: "configuration.json")
-    let model = RemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
+    let model = fixtureRemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
     model.setAction(.appleMenu, for: "menu")
     #expect(!model.saveConfigurationChanges())
-    #expect(!model.saveConfigurationChanges(as: " 默认配置 "))
-    #expect(model.profile == AgentProfile.defaults)
+    #expect(!model.saveConfigurationChanges(as: " \(L10n.tr("默认配置")) "))
+    #expect(model.profile == legacyModelProfile(.defaults))
     #expect(model.saveConfigurationChanges(as: " Café "))
     let saved = try #require(model.profile)
+    #expect(saved.modelID == RemoteDefinition.xiaomiID)
     let file = directory.appending(path: "profile.json")
     try ProfileArchive(saved).write(to: file)
     let archive = try ProfileArchive.read(from: file)
@@ -359,10 +361,11 @@ func namedProfilesAndImportsCannotOverwriteTheBuiltInOrLoseDrafts() throws {
     #expect(!model.importProfile(archive, as: "备份", discardingDraft: false))
     #expect(model.hasConfigurationChanges)
     #expect(model.importProfile(archive, as: "备份", discardingDraft: true))
-    let reopened = RemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
-    #expect(reopened.profiles.map(\.name) == ["默认配置", "Café", "备份"])
+    let reopened = fixtureRemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
+    #expect(reopened.profiles.map(\.name) == [L10n.tr("默认配置"), "Café", "备份"])
     #expect(reopened.profile?.actions["menu"] == .appleMenu)
-    #expect(reopened.profiles.first == AgentProfile.defaults)
+    #expect(reopened.profiles.allSatisfy { $0.modelID == RemoteDefinition.xiaomiID })
+    #expect(reopened.profiles.first == legacyModelProfile(.defaults))
 }
 
 @Test @MainActor
@@ -373,7 +376,7 @@ func xiaomiButtonsWorkWithoutLearningAndUseTheSavedAction() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     var dispatched: [AgentAction] = []
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
         dispatched.append(action)
     }
     model.refreshPermissions()
@@ -421,7 +424,7 @@ func xiaomiChooserStaysOpenAfterOnePressWithMultipleHIDReports(usage: Int) {
     input.state = .listening
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             runAction: { _, _ in })
     model.refreshPermissions()
     if key == "home" {
@@ -471,7 +474,7 @@ func xiaomiHomeReportsAreOnePressDuringLearningAndAfterRemapping(directFirst: Bo
     input.state = .listening
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             runAction: { _, _ in })
     model.refreshPermissions()
     var switches = 0
@@ -515,7 +518,7 @@ func mediaAndRunningAppChoosersConsumeNavigationBeforeConfiguredActions() throws
     defer { try? FileManager.default.removeItem(at: directory) }
     let input = InputFixture(devices: [device])
     input.state = .listening
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
         Issue.record("Unexpected action while selecting media: \(action)")
     }
     model.refreshPermissions()
@@ -599,7 +602,7 @@ func voiceShortPressDoesNotRecordAndPhysicalReleaseSubmitsOnlyOnce() async throw
     let dictation = DictationController(holdDelay: .milliseconds(15), begin: driver.begin)
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             dictation: dictation, runAction: { _, _ in })
     model.refreshPermissions()
     model.selectSlot("voice")
@@ -633,7 +636,7 @@ func voiceShortPressDoesNotRecordAndPhysicalReleaseSubmitsOnlyOnce() async throw
     try await waitUntil { dictation.phase == .sent }
     #expect(driver.stops == 1)
     #expect(driver.sends == 1)
-    #expect(model.activity.contains { $0.text.hasPrefix("松开 · 语音") })
+    #expect(model.activity.contains { $0.text == L10n.format("松开 · %@%@", "语音 · ", code.label) })
 }
 
 @Test(arguments: [true, false]) @MainActor
@@ -648,7 +651,7 @@ func xiaomiKeyboardF5ShowsLongPressWithoutStartingOrSubmittingAXDictation(_ arra
     let dictation = DictationController(holdDelay: .milliseconds(15), begin: driver.begin)
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             dictation: dictation, runAction: { _, _ in })
     model.refreshPermissions()
     model.selectSlot("voice")
@@ -677,7 +680,7 @@ func dictationNeverSubmitsAfterAnInterruption(_ interruption: String) async thro
     let dictation = DictationController(holdDelay: .zero, begin: driver.begin)
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             dictation: dictation, runAction: { _, _ in })
     model.refreshPermissions()
     model.selectSlot("voice")
@@ -744,7 +747,7 @@ func importsOfflineModelAndRoutesItsHardwareWithoutSharingXiaomiActions() async 
     let package = directory.appending(path: "Fixture")
     let storeURL = directory.appending(path: "configuration.json")
     let input = InputFixture(devices: [])
-    let model = RemoteModel(hid: input, storeURL: storeURL, runAction: { _, _ in })
+    let model = fixtureRemoteModel(hid: input, storeURL: storeURL, runAction: { _, _ in })
     try writeFixturePackage(package, image: model.remoteDefinition.front)
     try model.installModel(from: package)
 
@@ -761,11 +764,12 @@ func importsOfflineModelAndRoutesItsHardwareWithoutSharingXiaomiActions() async 
     let secondInput = InputFixture(devices: [device, xiaomi])
     secondInput.state = .listening
     var dispatched: [AgentAction] = []
-    let reloaded = RemoteModel(hid: secondInput, storeURL: storeURL) { action, _ in dispatched.append(action) }
+    let reloaded = fixtureRemoteModel(hid: secondInput, storeURL: storeURL) { action, _ in dispatched.append(action) }
     reloaded.refreshPermissions()
     reloaded.selectDevice(device)
     #expect(reloaded.connectedDevice == device)
     #expect(reloaded.profile?.name == "自定义")
+    #expect(reloaded.profile?.modelID == "test-remote")
 
     let signal = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 205, report: 2, value: 1)
     secondInput.press(xiaomi, signal)
@@ -799,7 +803,7 @@ func importsOfflineModelAndRoutesItsHardwareWithoutSharingXiaomiActions() async 
 func invalidOrConflictingModelDoesNotReplaceInstalledPackage() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
-    var catalog = RemoteCatalog(directory: directory.appending(path: "Installed"))
+    var catalog = fixtureCatalog(directory: directory.appending(path: "Installed"))
     let package = directory.appending(path: "Fixture")
     try writeFixturePackage(package, image: catalog.builtIn.front, inputKey: "missing")
     #expect(throws: RemotePackageError.self) { try catalog.install(package) }
@@ -812,7 +816,7 @@ func invalidOrConflictingModelDoesNotReplaceInstalledPackage() throws {
     try writeFixturePackage(package, image: catalog.builtIn.front)
     _ = try catalog.install(package)
     #expect(throws: RemotePackageError.self) { try catalog.install(package) }
-    #expect(catalog.models.map(\.id) == [RemoteDefinition.xiaomiID, "test-remote"])
+    #expect(catalog.models.map(\.id).sorted() == ["test-remote", RemoteDefinition.xiaomiID])
 }
 
 private func writeFixturePackage(_ package: URL, image: URL, vendor: Int = 0x1234, product: Int = 0x5678,
@@ -858,8 +862,8 @@ func versionSixConfigurationPreservesSelectedXiaomiAndItsCalibratedProfile() thr
     let original = try JSONEncoder().encode(previous)
     try original.write(to: storeURL)
 
-    let model = RemoteModel(hid: InputFixture(devices: [device]), storeURL: storeURL, runAction: { _, _ in })
-    #expect(model.profile == profile)
+    let model = fixtureRemoteModel(hid: InputFixture(devices: [device]), storeURL: storeURL, runAction: { _, _ in })
+    #expect(model.profile == legacyModelProfile(profile))
     #expect(model.config.selectedDevice == device)
     #expect(model.config.activeRemote?.slot(for: signal) == "back")
     #expect(model.config.version == Configuration.currentVersion)
@@ -874,7 +878,7 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
     let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
     var actions: [AgentAction] = []
-    let model = RemoteModel(hid: input, storeURL: folder.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: input, storeURL: folder.appending(path: "configuration.json"),
                             powerHoldDelay: .milliseconds(80), doubleClickDelay: .milliseconds(50)) { action, _ in
         actions.append(action)
     }

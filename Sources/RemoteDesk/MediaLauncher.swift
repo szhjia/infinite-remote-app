@@ -20,7 +20,7 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
     var pageStart: Int { page * MediaGrid.limit }
     var grid: MediaGrid { MediaGrid(count: apps.count - pageStart, singleRow: !switchesRunningApps) }
     var emptyMessage: String {
-        switchesRunningApps ? "没有其他正在运行的应用。" : "请在「系统设置 → 多媒体设置」中选择应用。"
+        switchesRunningApps ? L10n.tr("没有其他正在运行的应用。") : L10n.tr("请在「系统设置 → 多媒体设置」中选择应用。")
     }
 
     func showRunningApps() {
@@ -47,7 +47,7 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
         focus = initialFocus
         lastNativeDismissal = nil
         let panel = self.panel ?? makePanel()
-        panel.title = switchingApps ? "切换应用" : "媒体应用"
+        panel.title = switchingApps ? L10n.tr("切换应用") : L10n.tr("媒体应用")
         let mouse = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main else { return }
         let frame = screen.visibleFrame
@@ -130,7 +130,7 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
                 }
                 _ = try await NSWorkspace.shared.openApplication(at: url, configuration: options)
             } catch {
-                onError?("无法打开\(app.candidate.name)：\(error.localizedDescription)")
+                onError?(L10n.format("无法打开%@：%@", String(describing: app.candidate.name), String(describing: error.localizedDescription)))
             }
         }
     }
@@ -138,7 +138,7 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
     private func makePanel() -> LauncherPanel {
         let window = LauncherPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                    backing: .buffered, defer: false)
-        window.title = "媒体应用"
+        window.title = L10n.tr("媒体应用")
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.hidesOnDeactivate = false

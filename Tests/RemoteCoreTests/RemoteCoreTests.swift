@@ -105,3 +105,13 @@ func mediaSwitcherKeepsEveryAppOnOneRow(_ count: Int) {
     #expect(edges.changes(endpoint: 1, cookie: 1, value: 8, isActive: false) == [.released(2)])
     #expect(edges.changes(endpoint: 1, cookie: 1, value: 2, isActive: true) == [.pressed(2)])
 }
+
+@Test func configurationStoresArbitraryPackageHardwareWithoutManufacturerDefaults() {
+    let device = DeviceID(vendor: 1234, product: 5678, name: "Independent Remote")
+    var config = Configuration()
+    config.selectDevice(device)
+    #expect(config.selectedDevice == device)
+    #expect(config.activeRemote?.layout == .generic)
+    config.updateRemote { $0.learn(enter, as: "custom-confirm") }
+    #expect(config.match(device: device, input: enter) == "custom-confirm")
+}

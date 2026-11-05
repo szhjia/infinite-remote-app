@@ -1,63 +1,91 @@
-# 遥控台 · RemoteDesk
+# Infinite Remote App
 
-用小米蓝牙遥控器 2 Pro（\`2717:32B8\`）操作 macOS 和 ChatGPT 桌面端的 Codex。支持 macOS 14 起，macOS 26 及以上使用系统的 Liquid Glass 工具栏控件。
+[中文版本](README.zh-CN.md)
 
-## 使用
+Control macOS and your selected applications with independently installed remote model packages. Xiaomi Bluetooth Remote 2 Pro (`2717:32B8`) is the first supported model. Infinite Remote supports macOS 14 and later, and uses the system's Liquid Glass toolbar controls on macOS 26 and later.
 
-1. 在 macOS 蓝牙设置配对遥控器。启动 \`dist/RemoteDesk.app\`，从菜单栏分别显示或隐藏工作台和遥控器模型。单个已适配的设备会自动选中。
-2. 如果顶部显示「已连接 · 未监听」，在配置页允许「输入监控」，再返回应用。ChatGPT 和系统快捷键动作需要「辅助功能」权限。
-3. 小米 2 Pro 的按键会自动识别。要修改动作，在对应行选择单击、双击或长按动作，再点击「保存」。如遇到标准映射无法识别的信号，可选中对应行，再从「恢复默认」旁的菜单打开「手动校准当前键」。
-4. 可从工具栏暂停响应。开关右侧的图标控制遥控器模型。两者同时显示时，模型贴在工作台右边；仅显示模型时，按住外壳空白处即可拖动。右键点击模型可查看连接状态并显示或隐藏工作台。重启后会恢复各自的显隐状态。诊断窗口会分别显示「按下」和「松开」，打开期间不执行配置的动作。
-5. 通过左栏「系统设置」里的「多媒体设置」选入最多九个本机应用。按直播键打开单排选择器，左右键移动，确定键打开，返回键关闭。
-6. 「恢复默认」旁的菜单提供配置列表、导入和导出。内置默认配置可保存为命名副本。升级后保留现用配置和已录入的按键，可从配置列表切换到默认配置。
+The GitHub repository is `szhjia/infinite-remote-app`.
 
-| 实体键 | 默认动作 |
+## Release v0.0.1
+
+Download the macOS installer ZIP from [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.1). Requires macOS 14+. See [release notes](RELEASE_NOTES.md) for architecture and signing details. To build a release archive, run `./scripts/package-release.sh`.
+
+## Usage
+
+1. Launch `dist/Infinite Remote.app`. New installations contain no real remote models. The skippable setup walks through adding a model, Input Monitoring, Accessibility, and a connection check; reopen it from Settings at any time. The interface follows the system language, with English fallback.
+2. Open Remote Library in the sidebar. Install a model from a working subscription, or choose Import ZIP to select a local ZIP directly; an unpacked model folder also works. No extraction step is needed for ZIP import. Installed models appear in the sidebar and remain available offline, even while disconnected.
+3. Pair the remote in macOS Bluetooth settings and select its installed model. Enable Input Monitoring to read its buttons; simulated shortcuts and app-control actions also require Accessibility. Each permission has its own setup page in Settings. Return to the app to recheck grants.
+4. Select a single-press, double-press, or long-press action and click Save. For an unrecognized signal, select the row and choose Calibrate current key manually from the menu beside Restore Defaults. Model-supplied default actions can be saved as named configurations; user mappings and learned inputs remain separate from installed resources.
+5. Pause responses from the toolbar. The adjacent icon controls the remote model window. When both windows are visible, the model sits beside the workspace; on its own, drag an empty housing area to move it. Right-click for connection state and workspace visibility. Diagnostics report press/release events and suspend the app’s own configured actions.
+6. Open Settings → Media Settings to choose up to nine local applications. With the Xiaomi package defaults, Live opens the selector; Left/Right navigate, OK opens and Back closes. The menu beside Restore Defaults provides personal configuration selection, import and export.
+
+Settings manages HTTPS subscriptions independently of installed remotes. Refresh checks the catalog; install and update are explicit actions. A model can only be updated to a higher release from the same source, including local ZIP imports owned by the local source. Another source cannot replace it. Removing a subscription leaves its installed models in place; a failed refresh keeps the last successful catalog.
+
+The official source URL is preconfigured as `https://raw.githubusercontent.com/szhjia/infinite-remote-hub/main/catalog.json`. The public source provides the catalog, model ZIPs and artwork independently of app releases. Refresh it in the resource library to install supported models. Local ZIP import works independently; the app build never publishes source content.
+
+The following defaults come from the Xiaomi v2 package, rather than the application engine:
+
+| Physical button | Default action |
 | --- | --- |
-| 电源 | 短按关闭支持 DDC/CI 电源控制的外接屏，并把内置屏亮度降至最低。再按先恢复内置屏亮度，再尝试打开外接屏。长按立即锁定屏幕 |
-| 语音 | Codex 听写 |
-| 方向 | ↑ ↓ ← → |
-| 确定 | Return |
-| 返回 | Esc |
-| 主页 | 将 ChatGPT 带到前台 |
-| 音量加减 | 调整系统音量 |
-| 菜单 | 打开正在运行的应用切换器 |
-| 直播 | 媒体应用选择器 |
+| Power | Single press turns off an external display that supports DDC/CI power control and reduces the built-in display to minimum brightness. Press again to restore built-in brightness and then attempt to wake the external display. Long press locks the screen immediately. |
+| Voice | Codex dictation |
+| Direction | ↑ ↓ ← → |
+| OK | Return |
+| Back | Esc |
+| Home | Bring the package’s target application to the foreground (initially Codex) |
+| Volume up/down | Adjust system volume |
+| Menu | Open the running-application switcher |
+| Live | Media application selector |
 
-在 ChatGPT 设置中将「听写快捷键」设为 F5。如果「点按一次听写」已绑定回车，解除该绑定。聚焦 Codex 输入框，按住遥控器麦克风键说话，松开后等文字进入输入框。可把「确定」配置为「⌘Return」以发送转写。F5 由 ChatGPT 直接接收，遥控台的暂停和诊断模式只影响遥控台自己的动作。
+In ChatGPT settings, set Dictation Shortcut to F5. If “Press once to dictate” is bound to Return, remove that binding. Focus the Codex input, hold the remote's microphone button while speaking, release it, and wait for the text to appear. You can configure OK as `⌘Return` to send the transcription. F5 is received directly by ChatGPT; Infinite Remote's pause and diagnostics modes only affect Infinite Remote's own actions.
 
-「选择系统快捷键」只读取 macOS 当前启用的组合。可在系统设置中调整组合，再回到遥控台刷新选择。没有分配动作的音量等按键可继续由 macOS 自己处理。遥控台监听非独占 HID，配置动作可能和遥控器原有系统行为并行。
+“Choose system shortcut” reads only combinations currently enabled in macOS. Change a combination in System Settings, return to Infinite Remote, and refresh the selection. Buttons without an assigned action, including volume buttons, can continue to be handled by macOS. Infinite Remote listens to HID non-exclusively, so a configured action may run alongside the remote's original system behavior.
 
-配置保存在 \`~/Library/Application Support/RemoteDesk/configuration.json\`。从旧版迁移时，应用在同目录保留原配置备份。
+Configuration is stored in `~/Library/Application Support/RemoteDesk/configuration.json`. When migrating from an older version, the app keeps a backup of the original configuration in the same directory.
 
-## 开发与构建
+## Development and Build
 
-使用带 Swift 6 的 Xcode 或命令行工具：
-
-\`\`\`sh
-swift test
-./scripts/build-app.sh
-open dist/RemoteDesk.app
-\`\`\`
-
-构建脚本生成本机架构的应用包。默认使用临时签名，二进制变动后 macOS 可能会重新要求输入监控和辅助功能授权。需要反复调试实体遥控器时，可先用 `security find-identity -v -p codesigning` 查看钥匙串里的签名身份，再用同一个 Apple Development 身份构建：
+Use Xcode or Command Line Tools with Swift 6:
 
 ```sh
-REMOTEDESK_SIGNING_IDENTITY='Apple Development: 你的证书名称' ./scripts/build-app.sh
+swift build
+swift test
+./scripts/build-app.sh
+open "dist/Infinite Remote.app"
 ```
 
-也可以把 `security find-identity` 显示的证书指纹单独写入 `dist/.signing-identity`，供本机后续构建使用。显式设置的环境变量优先。
+The build script produces an app bundle for the local architecture. It uses ad hoc signing by default, and macOS may request Input Monitoring and Accessibility access again after the binary changes. For repeated testing with a physical remote, inspect available identities with `security find-identity -v -p codesigning`, then build with the same Apple Development identity:
 
-换用固定签名后，首次运行时重新授权。后续开发构建继续使用同一签名身份和应用标识。[平台与输入边界](docs/architecture.md)。
+```sh
+REMOTEDESK_SIGNING_IDENTITY='Apple Development: Your Certificate Name' ./scripts/build-app.sh
+```
 
-## 遥控器型号包
+You can also write only the certificate fingerprint shown by `security find-identity` to `dist/.signing-identity` for later local builds. An explicitly set environment variable takes precedence.
 
-在工作台中间栏打开「显示设备说明」可查看机身引线。点击机身或引线标签可定位到按键配置，点击 NFC 标记可查看触碰位置及硬件说明。
+After switching to a fixed signature, grant permissions again on first launch. Later development builds should continue using the same signing identity and application identifier. See [Platform and input boundaries](docs/architecture.md).
 
-「系统设置 → 导入型号包…」接受本地文件夹。内置的小米 2 Pro 是一份完整的格式示例，见 [型号包目录](Sources/RemoteDesk/Resources/RemoteModels/xiaomi-2-pro)。文件必须位于同一目录：
+## Remote Model Packages
 
-- `manifest.json` 使用 `version: 1`，声明稳定的型号 `id`、名称、厂商及产品 ID、机身 PNG 文件名和 `capabilities`。设备标识使用 JSON 整数。
-- `layout.json` 声明 PNG 的像素尺寸和可见机身矩形，按键和说明锚点的中心及宽高用相对整张 PNG 的 0～1 坐标表示，原点在左上。支持椭圆、圆角矩形及 90° 环形扇区。扇区角度从正右起顺时针计算。启用 `doublePress: true` 或 `longPress: true` 后，按键可配置对应的 `-double` 或 `-long` 动作槽。
-- `inputs.json` 列出 macOS HID collection page、collection usage、usage page 和 usage 对应的按键 ID。可以附加 report ID、活动值，或启用 HID 数组元素匹配。手动校准优先于包内规则。媒体选择器可使用 `left`、`right`、`up`、`down`、`ok`、`back` 这些导航键 ID。
-- 机身 PNG 与布局使用相同尺寸。导入会复制资源到 `~/Library/Application Support/RemoteDesk/RemoteModels/`。未连接设备时可切换工作台预览，连接后选择对应实体遥控器再校准或测试输入。
+Open “Show device guide” in the workspace's middle column to view body callouts. Click the body or a callout label to locate the corresponding button configuration. Click the NFC marker to view touch location and hardware notes.
 
-[小米 2 Pro 手机说明](docs/xiaomi-2-pro-guide.md) 包含机身图、配对步骤和排障说明，可作为 NFC 打开说明页的目标。NFC 说明针对遥控器硬件。RemoteDesk 当前未接入原装 NFC 标签。验证「碰一碰打开设备说明」时，可先用手机只读检查原装标签，再用独立可移除的标签写入设备说明的 HTTPS 链接，并分别验证手机读取和 Mac 输入诊断。
+Remote Library → Import ZIP accepts a ZIP or local model folder. Installed resources are copied to `~/Library/Application Support/RemoteDesk/RemoteModels/`. The maintained Xiaomi model, guides and protocol documentation live in the independent Remote Hub repository; real model resources are not bundled in this app. Test-only v1 fixtures remain for backward compatibility.
+
+- `manifest.json` v2 declares stable model/device IDs, a numeric `release`, localized model/brand/summary/capability text, optional package-local PNG logo, default actions, target bundle ID and input behavior. English is required as a fallback; Chinese translations follow system language. Legacy v1 packages remain readable.
+- `layout.json` declares PNG dimensions, the visible body rectangle, key names, hotspots and capability anchors. Normalized center/size coordinates are relative to the full PNG, with the origin at the top left. Ellipse, rectangle and sector shapes are supported. Gesture flags create `-double`/`-long` action slots; package updates cannot remove slots used by saved configurations.
+- `inputs.json` maps HID collection/page/usage signals to physical key IDs, with optional report/value/array rules. User calibration takes precedence. Defaults and model-specific input behavior come from validated declarations, rather than runtime brand checks.
+- A ZIP contains one model folder and its resources. Installation validates paths, images, cross-file references and action declarations before replacing an installation. Downloaded packages must match the catalog hash, identity and release. Source ownership and device conflicts are checked; failed updates preserve the installed package and user configuration.
+
+Use the independent hub’s explicit `export-source --output PATH` command to generate `catalog.json`, `packages/` and `assets/` before publishing a subscription. Building the app does not read a sibling checkout or publish that export.
+The [Xiaomi 2 Pro phone guide](docs/xiaomi-2-pro-guide.md) includes body images, pairing steps, and troubleshooting, and can serve as the destination for opening a guide through NFC. The NFC guidance applies to the remote hardware. Infinite Remote does not currently integrate the original NFC tag. To test “tap to open device guide,” first inspect the original tag read-only on a phone, then write the guide's HTTPS URL to a separate removable tag and verify both phone reading and Mac input diagnostics.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=szhjia/infinite-remote-app&type=Date)](https://star-history.com/#szhjia/infinite-remote-app&Date)
+
+## License
+
+Copyright (C) 2026 Infinite Remote contributors.
+
+This project is licensed under the [GNU General Public License, version 3 or (at your option) any later version](LICENSE) (`GPL-3.0-or-later`). Commercial use is permitted. When distributing the software or a derivative work, you must comply with the GPL's corresponding-source and same-license requirements.
+
+Third-party components and artwork retain their original licenses. See the bundled [Tabler license notice](Sources/RemoteDesk/Resources/LICENSE-Tabler.txt).

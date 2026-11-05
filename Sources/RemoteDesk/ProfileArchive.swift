@@ -7,6 +7,9 @@ struct ProfileArchive: Codable {
     let modelID: String?
     let actions: [String: AgentAction]
 
+    // Version 1 archives predate explicit model associations.
+    var associatedModelID: String { modelID ?? "xiaomi-2-pro" }
+
     init(_ profile: AgentProfile) {
         version = profile.modelID == nil ? 1 : 2
         modelID = profile.modelID

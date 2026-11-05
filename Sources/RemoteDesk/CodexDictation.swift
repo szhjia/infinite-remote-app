@@ -21,16 +21,16 @@ enum DictationFailure: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .accessibilityRequired: "请先在系统设置中允许遥控台使用辅助功能。"
-        case .codexNotFrontmost: "请先把 Codex 对话切到前台。"
-        case .conversationNotIdentifiable: "无法确认当前对话。请在 Codex 中打开一条已有消息的本地对话。"
-        case .composerUnavailable: "在当前 Codex 对话中未能识别可操作的输入框和听写控件。"
-        case .startRejected: "Codex 未接受开始听写的操作。"
-        case .draft: "当前对话已有草稿或附件，已取消听写。"
-        case .contextChanged: "Codex 对话、输入框或权限已变化，未发送。"
-        case .recordingNotConfirmed: "未能确认 Codex 开始听写。请检查 ChatGPT 的麦克风权限。"
-        case .transcriptNotConfirmed: "未能确认同一对话的听写结果，未发送。"
-        case .submitFailed: "未能确认 Codex 的发送结果，请查看原对话。"
+        case .accessibilityRequired: L10n.tr("请先在系统设置中允许无限遥控器使用辅助功能。")
+        case .codexNotFrontmost: L10n.tr("请先把 Codex 对话切到前台。")
+        case .conversationNotIdentifiable: L10n.tr("无法确认当前对话。请在 Codex 中打开一条已有消息的本地对话。")
+        case .composerUnavailable: L10n.tr("在当前 Codex 对话中未能识别可操作的输入框和听写控件。")
+        case .startRejected: L10n.tr("Codex 未接受开始听写的操作。")
+        case .draft: L10n.tr("当前对话已有草稿或附件，已取消听写。")
+        case .contextChanged: L10n.tr("Codex 对话、输入框或权限已变化，未发送。")
+        case .recordingNotConfirmed: L10n.tr("未能确认 Codex 开始听写。请检查 ChatGPT 的麦克风权限。")
+        case .transcriptNotConfirmed: L10n.tr("未能确认同一对话的听写结果，未发送。")
+        case .submitFailed: L10n.tr("未能确认 Codex 的发送结果，请查看原对话。")
         }
     }
 }
@@ -43,11 +43,11 @@ final class DictationController {
         var message: String? {
             switch self {
             case .idle, .holding: nil
-            case .starting: "正在启动 Codex 听写…"
-            case .recording: "录音中 · 松开发送"
-            case .transcribing: "正在转写…"
-            case .submitting: "正在确认发送结果…"
-            case .sent: "已发送到 Codex"
+            case .starting: L10n.tr("正在启动 Codex 听写…")
+            case .recording: L10n.tr("录音中 · 松开发送")
+            case .transcribing: L10n.tr("正在转写…")
+            case .submitting: L10n.tr("正在确认发送结果…")
+            case .sent: L10n.tr("已发送到 Codex")
             case let .failed(message): message
             }
         }
@@ -94,7 +94,7 @@ final class DictationController {
                     try Task.checkCancellation()
                     guard try session?.isRecording() == true else { throw DictationFailure.recordingNotConfirmed }
                 }
-                cancel("未收到语音键松开信号，已取消听写。")
+                cancel(L10n.tr("未收到语音键松开信号，已取消听写。"))
             } catch is CancellationError {
                 return
             } catch {

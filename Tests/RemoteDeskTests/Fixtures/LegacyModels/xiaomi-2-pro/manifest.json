@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "xiaomi-2-pro",
+  "name": "小米蓝牙遥控器 2 Pro",
+  "devices": [
+    {
+      "vendor": 10007,
+      "product": 12984
+    }
+  ],
+  "front": "front.png",
+  "capabilities": [
+    {
+      "id": "nfc",
+      "name": "NFC",
+      "symbol": "wave.3.right",
+      "description": "将手机的 NFC 感应区域靠近机身正面下方的标记。原厂用途是与兼容设备一碰投屏。",
+      "status": "硬件具备 · 无限遥控器未接入"
+    },
+    {
+      "id": "microphone",
+      "name": "机身麦克风",
+      "symbol": "mic",
+      "description": "遥控器具备独立的麦克风。语音键可触发 ChatGPT 的听写快捷键，无限遥控器当前未采集遥控器自身的音频。",
+      "status": "硬件具备 · 无限遥控器未接入"
+    },
+    {
+      "id": "usb-c",
+      "name": "USB-C 充电",
+      "symbol": "bolt",
+      "description": "通过机身的 USB-C 接口为遥控器充电。",
+      "status": "硬件具备 · 机身充电"
+    }
+  ]
+}

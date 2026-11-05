@@ -4,6 +4,16 @@ import CoreGraphics
 import Observation
 import RemoteCore
 
+struct PermissionAccess {
+    var postEvents: () -> Bool
+    var accessibility: () -> Bool
+    var listenEvents: (() -> Bool)? = nil
+    static var system: Self {
+        Self(postEvents: CGPreflightPostEventAccess, accessibility: AXIsProcessTrusted,
+             listenEvents: CGPreflightListenEventAccess)
+    }
+}
+
 struct RemoteKeyRelease: Equatable {
     let id = UUID()
     let key: String
@@ -61,8 +71,10 @@ final class RemoteModel {
     private(set) var error: String?
     private(set) var storageError: String?
     private(set) var isRunning = false
+    private(set) var canListen = false
     private(set) var canPost = false
     private(set) var canUseAccessibility = false
+    var requestedPermission: PermissionKind?
     private(set) var hardwarePress: HardwarePress?
     private(set) var lastKeyRelease: RemoteKeyRelease?
     var pressedHardwareKey: String? { hardwareDown?.key }
@@ -84,8 +96,8 @@ final class RemoteModel {
     private var dictationInput: (code: InputCode, origin: RemoteInputOrigin?)?
     private let hid: any RemoteInputSource
     private let storeURL: URL
+    private let permissionAccess: PermissionAccess
     private var catalog: RemoteCatalog
-    private var previewModelID: String?
     var onModelChanged: (() -> Void)?
     private let runAction: @MainActor (AgentAction, AppTarget?) async throws -> Void
     private var draftActions: [String: AgentAction]?
@@ -111,17 +123,24 @@ final class RemoteModel {
     var onDismissMedia: (() -> Void)?
 
     convenience init() {
-        let directory = URL.applicationSupportDirectory.appending(path: "RemoteDesk", directoryHint: .isDirectory)
+        let directory = ProcessInfo.processInfo.environment["INFINITE_REMOTE_DATA_DIR"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? URL.applicationSupportDirectory.appending(path: "RemoteDesk", directoryHint: .isDirectory)
         self.init(hid: HIDMonitor(), storeURL: directory.appending(path: "configuration.json"),
                   runAction: AgentRunner.run)
     }
 
     init(hid: any RemoteInputSource, storeURL: URL,
          dictation: DictationController = DictationController(),
+         permissions: PermissionAccess = .system,
          powerHoldDelay: Duration = .milliseconds(600),
          doubleClickDelay: Duration = .milliseconds(300),
          runAction: @escaping @MainActor (AgentAction, AppTarget?) async throws -> Void) {
         self.dictation = dictation
+        self.permissionAccess = permissions
+        self.canListen = permissions.listenEvents?() ?? false
+        self.canPost = permissions.postEvents()
+        self.canUseAccessibility = permissions.accessibility()
         self.hid = hid
         self.storeURL = storeURL
         self.catalog = RemoteCatalog(directory: storeURL.deletingLastPathComponent()
@@ -143,17 +162,17 @@ final class RemoteModel {
                     didUpgrade = true
                 } catch {
                     canSave = false
-                    storageError = "无法备份旧配置，本次更改不会覆盖原文件。"
+                    storageError = L10n.tr("无法备份旧配置，本次更改不会覆盖原文件。")
                 }
             } else {
                 canSave = false
-                storageError = "配置来自其他版本，本次更改不会覆盖原文件。"
+                storageError = L10n.tr("配置来自其他版本，本次更改不会覆盖原文件。")
             }
         } catch let failure as CocoaError where failure.code == .fileReadNoSuchFile {
             // The initial configuration is saved after the first edit.
         } catch {
             canSave = false
-            storageError = "无法读取配置，本次更改不会覆盖原文件。"
+            storageError = L10n.tr("无法读取配置，本次更改不会覆盖原文件。")
         }
         hid.selectedDevice = config.selectedDevice.flatMap { catalog.model(for: $0) == nil ? nil : $0 }
         resetSlot()
@@ -181,69 +200,121 @@ final class RemoteModel {
         }
     }
     var connected: Bool { connectedDevice != nil }
+    var selectedAmbiguousDevices: Set<DeviceID> {
+        Set(ambiguousDevices.filter { catalog.model(for: $0)?.id == remoteDefinition.id })
+    }
+    var libraryDirectory: URL { storeURL.deletingLastPathComponent().appending(path: "ResourceLibrary") }
+    var resourceLoadIssues: [String] { catalog.loadIssues }
     var installedModels: [RemoteDefinition] { catalog.models }
+    var hasRemote: Bool { !remoteDefinition.id.isEmpty }
     var remoteDefinition: RemoteDefinition {
-        if let previewModelID, let preview = installedModels.first(where: { $0.id == previewModelID }) { return preview }
-        return config.selectedDevice.flatMap(catalog.model(for:)) ?? catalog.builtIn
+        if let id = config.selectedModelID, let selected = installedModels.first(where: { $0.id == id }) { return selected }
+        return config.selectedDevice.flatMap(catalog.model(for:)) ?? installedModels.first ?? .empty
     }
     var keys: [RemoteKey] { remoteDefinition.layout.keys }
-    private var isXiaomi: Bool { remoteDefinition.id == RemoteDefinition.xiaomiID }
+    var consumesContextMenu: Bool { remoteDefinition.manifest.behavior.consumesContextMenu }
+    func installedOwner(of id: String) -> String? { catalog.owner(of: id) }
 
-    func installModel(from url: URL) throws {
-        let model = try catalog.install(url)
+    func installModel(from url: URL, sourceID: String? = nil) throws {
+        guard !hasConfigurationChanges else {
+            throw RemotePackageError.invalid(L10n.tr("请先保存或放弃当前配置更改。"))
+        }
+        let previousID = remoteDefinition.id
+        let definition = try catalog.install(url, sourceID: sourceID)
+        cancelLearning()
+        cancelDictation()
+        cancelGestures()
+        clearHardwarePress()
+        aliasedPresses.removeAll()
+        onDismissMedia?()
+        if previousID.isEmpty {
+            config.selectedModelID = definition.id
+            save()
+        }
         updateAmbiguity(discoveredAmbiguities)
         updateDevices(discoveredDevices)
-        if !connected && !hasConfigurationChanges { previewModel(model.id) }
+        if !connected { previewModel(definition.id) }
+        resetSlot()
+        onModelChanged?()
         error = nil
-        feedback = "已导入型号：\(model.manifest.name)"
+        feedback = L10n.format("已导入型号：%@", definition.manifest.name)
     }
 
+    /// Keep ZIP decompression and integrity scans off the UI actor.
+    func installResourcePackage(from url: URL, sourceID: String? = nil) async throws {
+        let directory = try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+        if directory { try installModel(from: url, sourceID: sourceID); return }
+        let temporary = FileManager.default.temporaryDirectory.appending(path: "remote-import-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let folder = try await Task.detached(priority: .userInitiated) {
+            try PackageArchive.extract(url, to: temporary)
+        }.value
+        try Task.checkCancellation()
+        try installModel(from: folder, sourceID: sourceID)
+    }
+
+    /// Select an installed remote independently of its hardware connection.
     func previewModel(_ id: String) {
-        guard !connected, !hasConfigurationChanges, remoteDefinition.id != id,
-              installedModels.contains(where: { $0.id == id }) else { return }
-        calibrationConflict = nil
-        previewModelID = id
+        guard !hasConfigurationChanges, installedModels.contains(where: { $0.id == id }) else { return }
+        if remoteDefinition.id != id || config.selectedModelID == nil {
+            var updated = config
+            updated.selectedModelID = id
+            guard save(updated) else { return }
+            calibrationConflict = nil
+            cancelLearning()
+            cancelDictation()
+            cancelGestures()
+            clearHardwarePress()
+            aliasedPresses.removeAll()
+            onDismissMedia?()
+        }
+        let matching = selectableDevices.filter { catalog.model(for: $0)?.id == id }
+        if matching.count == 1, let device = matching.first { selectDevice(device) }
+        else {
+            // Keep persisted hardware mapping, but never listen to another model.
+            hid.selectedDevice = connectedDevice
+        }
+        // Config may already select this physical device after switching back
+        // from an offline preview; reattach HID even when selectDevice is a no-op.
+        hid.selectedDevice = connectedDevice
         resetSlot()
         onModelChanged?()
     }
 
     private func resetSlot() {
-        slot = keys.contains { $0.id == "ok" } ? "ok" : keys[0].id
+        slot = keys.contains { $0.id == "ok" } ? "ok" : (keys.first?.id ?? "")
     }
     var canReadKeys: Bool {
-        connected && monitorState == .listening && !(connectedDevice.map(ambiguousDevices.contains) ?? false)
+        canListen && connected && monitorState == .listening && !(connectedDevice.map(ambiguousDevices.contains) ?? false)
     }
     var selectableDevices: [DeviceID] { devices.filter { !ambiguousDevices.contains($0) } }
     private var defaultProfile: AgentProfile { defaultProfile(for: remoteDefinition.id) }
 
     private func defaultProfile(for modelID: String) -> AgentProfile {
-        if modelID == RemoteDefinition.xiaomiID { return .defaults }
-        return AgentProfile(id: AgentProfile.defaults.id, name: AgentProfile.defaults.name,
-                            target: AgentProfile.defaults.target, modelID: modelID)
+        let definition = installedModels.first { $0.id == modelID } ?? .empty
+        return AgentProfile(id: AgentProfile.defaults.id, name: L10n.tr("默认配置"),
+                            target: definition.manifest.target, actions: definition.manifest.defaults, modelID: modelID)
     }
 
-    var profile: AgentProfile? { profile(for: remoteDefinition.id) }
-    var profiles: [AgentProfile] { profiles(for: remoteDefinition.id) }
+    var profile: AgentProfile? { hasRemote ? profile(for: remoteDefinition.id) : nil }
+    var profiles: [AgentProfile] { hasRemote ? profiles(for: remoteDefinition.id) : [] }
 
     func profile(for modelID: String) -> AgentProfile {
-        let id = modelID == RemoteDefinition.xiaomiID ? config.activeAgentID : config.activeAgentIDsByModel?[modelID]
+        let id = config.activeAgentIDsByModel?[modelID]
         return profiles(for: modelID).first { $0.id == id } ?? defaultProfile(for: modelID)
     }
 
     private func profiles(for modelID: String) -> [AgentProfile] {
         [defaultProfile(for: modelID)] + config.agents.filter {
-            ($0.modelID ?? RemoteDefinition.xiaomiID) == modelID && $0.id != AgentProfile.defaults.id
+            $0.modelID == modelID && $0.id != AgentProfile.defaults.id
         }
     }
 
     private func selectProfileID(_ id: String, in updated: inout Configuration) {
-        if isXiaomi {
-            updated.activeAgentID = id
-        } else {
-            var selections = updated.activeAgentIDsByModel ?? [:]
-            selections[remoteDefinition.id] = id
-            updated.activeAgentIDsByModel = selections
-        }
+        var selections = updated.activeAgentIDsByModel ?? [:]
+        selections[remoteDefinition.id] = id
+        updated.activeAgentIDsByModel = selections
+        updated.activeAgentID = id // Preserve the legacy public configuration accessor.
     }
     var needsProfileName: Bool { profile?.id == AgentProfile.defaults.id && draftActions != nil }
     var editableActions: [String: AgentAction] { draftActions ?? profile?.actions ?? [:] }
@@ -253,22 +324,24 @@ final class RemoteModel {
     }
     var hasConfigurationChanges: Bool { draftActions != nil || !draftRemotes.isEmpty || calibrationConflict != nil }
     var connectionStatus: String {
-        guard connected else { return ambiguousDevices.isEmpty ? "未连接" : "已连接 · 设备无法区分" }
-        if monitorState == .ambiguous || connectedDevice.map(ambiguousDevices.contains) == true { return "已连接 · 设备无法区分" }
-        guard canReadKeys else { return "已连接 · 未监听" }
-        if isDiagnosing { return "已连接 · 诊断中" }
-        return isEnabled ? "已连接" : "已连接 · 已暂停"
+        guard connected else { return selectedAmbiguousDevices.isEmpty ? L10n.tr("未连接") : L10n.tr("已连接 · 设备无法区分") }
+        if monitorState == .ambiguous || connectedDevice.map(ambiguousDevices.contains) == true { return L10n.tr("已连接 · 设备无法区分") }
+        guard canReadKeys else { return L10n.tr("已连接 · 未监听") }
+        if isDiagnosing { return L10n.tr("已连接 · 诊断中") }
+        return isEnabled ? L10n.tr("已连接") : L10n.tr("已连接 · 已暂停")
     }
 
     func refreshPermissions() {
         updateMonitorState(hid.refresh())
-        canPost = CGPreflightPostEventAccess()
-        canUseAccessibility = AXIsProcessTrusted()
+        canPost = permissionAccess.postEvents()
+        canUseAccessibility = permissionAccess.accessibility()
         if !canUseAccessibility { cancelDictation() }
     }
 
     private func updateMonitorState(_ state: InputMonitorState) {
         monitorState = state
+        // Read authorization independently: ambiguity and permission can coexist.
+        canListen = permissionAccess.listenEvents?() ?? (state != .permission)
         if !canReadKeys {
             aliasedPresses.removeAll()
             cancelLearning()
@@ -300,7 +373,8 @@ final class RemoteModel {
 
     private func updateSelection() {
         if (connectedDevice == nil || connectedDevice.map(ambiguousDevices.contains) == true),
-           selectableDevices.count == 1, let device = selectableDevices.first {
+           selectableDevices.filter({ catalog.model(for: $0)?.id == remoteDefinition.id }).count == 1,
+           let device = selectableDevices.first(where: { catalog.model(for: $0)?.id == remoteDefinition.id }) {
             selectDevice(device)
         }
         if !canReadKeys {
@@ -319,7 +393,8 @@ final class RemoteModel {
     }
 
     func requestPost() {
-        if !CGRequestPostEventAccess() { openPrivacy("Privacy_Accessibility") }
+        let requested = CGRequestPostEventAccess()
+        if !requested || !AXIsProcessTrusted() { openPrivacy("Privacy_Accessibility") }
         refreshPermissions()
     }
 
@@ -337,7 +412,7 @@ final class RemoteModel {
 
     func selectDevice(_ id: DeviceID) {
         guard let definition = catalog.model(for: id), devices.contains(id), !ambiguousDevices.contains(id),
-              config.selectedDevice != id || previewModelID != nil,
+              config.selectedDevice != id || config.selectedModelID != definition.id,
               definition.id == remoteDefinition.id || !hasConfigurationChanges else { return }
         let previousModelID = remoteDefinition.id
         calibrationConflict = nil
@@ -347,8 +422,8 @@ final class RemoteModel {
         clearHardwarePress()
         cancelGestures()
         onDismissMedia?()
-        previewModelID = nil
-        config.selectDevice(id, layout: definition.id == RemoteDefinition.xiaomiID ? .xiaomi2Pro : .generic)
+        config.selectedModelID = definition.id
+        config.selectDevice(id, layout: .generic)
         hid.selectedDevice = id
         resetSlot()
         if previousModelID != definition.id { onModelChanged?() }
@@ -377,7 +452,7 @@ final class RemoteModel {
             try? await Task.sleep(for: .seconds(20))
             guard !Task.isCancelled else { return }
             self?.cancelLearning()
-            self?.error = "未收到按键。检查遥控器是否已连接，然后重试。"
+            self?.error = L10n.tr("未收到按键。检查遥控器是否已连接，然后重试。")
         }
     }
 
@@ -408,7 +483,7 @@ final class RemoteModel {
         cancelLearning()
         let defaults = defaultProfile.actions
         draftActions = profile?.actions == defaults ? nil : defaults
-        feedback = draftActions == nil ? "当前已使用默认按键。" : "已载入默认按键，保存后生效。"
+        feedback = draftActions == nil ? L10n.tr("当前已使用默认按键。") : L10n.tr("已载入默认按键，保存后生效。")
         error = nil
     }
 
@@ -421,7 +496,7 @@ final class RemoteModel {
             if needsProfileName {
                 guard let name = availableProfileName(name) else { return false }
                 let copy = AgentProfile(name: name, target: defaultProfile.target, actions: draftActions,
-                                        modelID: isXiaomi ? nil : remoteDefinition.id)
+                                        modelID: remoteDefinition.id)
                 updated.agents.append(copy)
                 selectProfileID(copy.id, in: &updated)
             } else if let index = updated.agents.firstIndex(where: { $0.id == profile?.id }) {
@@ -436,7 +511,7 @@ final class RemoteModel {
         draftActions = nil
         draftRemotes = [:]
         error = nil
-        feedback = "配置已保存"
+        feedback = L10n.tr("配置已保存")
         return true
     }
 
@@ -457,13 +532,13 @@ final class RemoteModel {
     @discardableResult
     func importProfile(_ archive: ProfileArchive, as name: String, discardingDraft: Bool) -> Bool {
         guard discardingDraft || !hasConfigurationChanges, let name = availableProfileName(name) else { return false }
-        guard (archive.modelID ?? RemoteDefinition.xiaomiID) == remoteDefinition.id,
+        guard archive.associatedModelID == remoteDefinition.id,
               remoteDefinition.accepts(actions: archive.actions) else {
-            error = "此配置与当前遥控器型号不匹配。"
+            error = L10n.tr("此配置与当前遥控器型号不匹配。")
             return false
         }
         let copy = AgentProfile(name: name, target: defaultProfile.target, actions: archive.actions,
-                                modelID: isXiaomi ? nil : remoteDefinition.id)
+                                modelID: remoteDefinition.id)
         var updated = config
         updated.agents.append(copy)
         selectProfileID(copy.id, in: &updated)
@@ -472,19 +547,19 @@ final class RemoteModel {
         cancelGestures()
         cancelDictation()
         onDismissMedia?()
-        feedback = "配置已导入"
+        feedback = L10n.tr("配置已导入")
         return true
     }
 
     private func availableProfileName(_ proposed: String?) -> String? {
         let name = proposed?.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping ?? ""
         guard !name.isEmpty else {
-            error = "请输入配置名称。"
+            error = L10n.tr("请输入配置名称。")
             return nil
         }
         guard !profiles.contains(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
             .precomposedStringWithCanonicalMapping.lowercased() == name.lowercased() }) else {
-            error = "此配置名称已存在。"
+            error = L10n.tr("此配置名称已存在。")
             return nil
         }
         return name
@@ -515,18 +590,21 @@ final class RemoteModel {
         lastKeyRelease = RemoteKeyRelease(key: id)
         feedback = nil
         error = nil
-        guard canReadKeys else { return }
+        guard canReadKeys else {
+            if !canListen { requestedPermission = .inputMonitoring }
+            return
+        }
         guard isEnabled else {
-            feedback = "遥控触发已暂停"
+            feedback = L10n.tr("遥控触发已暂停")
             return
         }
         if onMediaKey?(id, false) == true { return }
         guard let action = profile?.actions[id] else {
-            feedback = "此键尚未分配动作"
+            feedback = L10n.tr("此键尚未分配动作")
             return
         }
         if action == .dictation {
-            feedback = "请按住实体语音键开始听写。"
+            feedback = L10n.tr("请按住实体语音键开始听写。")
         } else {
             perform(action)
         }
@@ -541,7 +619,7 @@ final class RemoteModel {
         case let .released(input, origin):
             let slot = learnedSlot(for: input, in: config.activeRemote) ?? remoteDefinition.slot(for: input)
             let name = slot.flatMap { id in keys.first { $0.id == id }?.name }
-            record("松开 · \(name.map { $0 + " · " } ?? "")\(input.label)")
+            record(L10n.format("松开 · %@%@", String(describing: name.map { $0 + " · " } ?? ""), String(describing: input.label)))
             if let key = aliasedKey(for: input), let origin, var press = aliasedPresses[key] {
                 guard press.origins.remove(origin) != nil else { return }
                 if press.origins.isEmpty {
@@ -598,8 +676,8 @@ final class RemoteModel {
     }
 
     private func aliasedKey(for input: InputCode) -> String? {
-        guard isXiaomi, let key = remoteDefinition.slot(for: input),
-              ["home", "tv", "menu"].contains(key) else { return nil }
+        guard let key = remoteDefinition.slot(for: input),
+              remoteDefinition.manifest.behavior.coalescedKeys.contains(key) else { return nil }
         return key
     }
 
@@ -613,7 +691,7 @@ final class RemoteModel {
 
     private func receivePress(_ input: InputCode, slot knownSlot: String?, origin: RemoteInputOrigin?) {
         let visibleSlot = knownSlot.flatMap { candidate in keys.first { $0.id == candidate } }
-        record("按下 · \(visibleSlot.map { $0.name + " · " } ?? "")\(input.label)")
+        record(L10n.format("按下 · %@%@", String(describing: visibleSlot.map { $0.name + " · " } ?? ""), String(describing: input.label)))
 
         // The RC003 can send both a keyboard array report and a discrete report for one press.
         if let key = aliasedKey(for: input), let origin {
@@ -638,12 +716,15 @@ final class RemoteModel {
         guard calibrationConflict == nil, let visibleSlot else { return }
         showHardwarePress(visibleSlot.id, code: input, origin: origin)
         guard isEnabled, !isDiagnosing, !isRunning, !dictation.phase.active else { return }
-        if onMediaKey?(visibleSlot.id, input.matchesNavigationKey(visibleSlot.id)) == true {
+        if onMediaKey?(visibleSlot.id, profile?.actions[visibleSlot.id].map { action in
+            if case let .foregroundKey(shortcut) = action { return input.isNativeKeyboardShortcut(shortcut) }
+            return false
+        } ?? false) == true {
             cancelGestures()
             return
         }
         let action = profile?.actions[visibleSlot.id]
-        if action != .dictation && (visibleSlot.id == "power" && isXiaomi
+        if action != .dictation && (remoteDefinition.manifest.behavior.deferredKeys.contains(visibleSlot.id)
             || gestureAction(visibleSlot.holdSlot, for: visibleSlot) != nil
             || gestureAction(visibleSlot.doubleSlot, for: visibleSlot) != nil) {
             startGesture(visibleSlot, input: input, origin: origin)
@@ -653,9 +734,10 @@ final class RemoteModel {
         if action == .dictation {
             feedback = nil
             error = nil
-            // Xiaomi's mic key is delivered to ChatGPT as a real keyboard F5.
-            // Let ChatGPT handle both edges of its configured dictation shortcut.
-            if isXiaomi && input.isKeyboardF5 { return }
+            // Packages can declare native keyboard dictation pass-through.
+            // Preserve both native edges instead of dispatching a duplicate action.
+            if remoteDefinition.manifest.behavior.nativeDictationKeys.contains(visibleSlot.id) && input.isKeyboardF5 { return }
+            guard canUseAccessibility else { requestedPermission = .accessibility; return }
             dictationInput = (input, origin)
             dictation.press()
         } else {
@@ -676,7 +758,7 @@ final class RemoteModel {
 
     private func cancelDictation() {
         dictationInput = nil
-        dictation.cancel("听写已取消，未发送。")
+        dictation.cancel(L10n.tr("听写已取消，未发送。"))
     }
 
     func resolveCalibrationConflict(transfer: Bool) {
@@ -691,7 +773,7 @@ final class RemoteModel {
             $0.learn(input, as: key)
         }
         let name = keys.first { $0.id == key }?.name ?? key
-        feedback = "已收到「\(name)」的按键信号，保存后生效。"
+        feedback = L10n.format("已收到「%@」的按键信号，保存后生效。", String(describing: name))
     }
 
     private func gestureAction(_ slot: String, for key: RemoteKey) -> AgentAction? {
@@ -827,6 +909,13 @@ final class RemoteModel {
 
     private func perform(_ action: AgentAction) {
         guard !isRunning else { return }
+        switch action {
+        case .shortcut, .foregroundKey, .systemShortcut:
+            guard canPost else { requestedPermission = .accessibility; return }
+        case .appleMenu, .dictation:
+            guard canUseAccessibility else { requestedPermission = .accessibility; return }
+        default: break
+        }
         error = nil
         if action == .mediaChooser || action == .appSwitcher {
             cancelGestures()
@@ -841,7 +930,7 @@ final class RemoteModel {
             defer { isRunning = false }
             do {
                 try await runAction(action, target)
-                feedback = "已执行：\(action.title)"
+                feedback = L10n.format("已执行：%@", String(describing: action.title))
             } catch {
                 self.error = error.localizedDescription
             }
@@ -860,7 +949,7 @@ final class RemoteModel {
             storageError = nil
             return true
         } catch {
-            storageError = "配置保存失败：\(error.localizedDescription)"
+            storageError = L10n.format("配置保存失败：%@", String(describing: error.localizedDescription))
             return false
         }
     }
@@ -878,11 +967,6 @@ extension InputCode {
 
     var isKeyboardF5: Bool {
         isKeyboardUsage(0x3E)
-    }
-
-    func matchesNavigationKey(_ slot: String) -> Bool {
-        guard case let .foregroundKey(shortcut)? = AgentProfile.defaults.actions[slot] else { return false }
-        return isNativeKeyboardShortcut(shortcut)
     }
 
     func isNativeKeyboardShortcut(_ shortcut: KeyboardShortcut) -> Bool {
@@ -903,26 +987,26 @@ extension InputCode {
 extension AgentAction {
     var title: String {
         switch self {
-        case .openApp: "打开 ChatGPT"
-        case .openLink: "打开网页"
-        case .shortcut(AgentProfile.newChat): "新建对话"
-        case .shortcut(AgentProfile.sendDraft): "发送当前草稿"
-        case .shortcut(AgentProfile.stop): "停止生成"
-        case .shortcut: "ChatGPT 快捷键"
-        case .chatBar: "打开 ChatGPT Chat Bar"
-        case .nextAgent: "切换到下一个 Agent"
-        case .dictation: "Codex 听写"
-        case .displaySleep: "显示器休眠"
-        case .toggleDisplays: "关闭或恢复显示器"
-        case .appleMenu: "打开苹果菜单"
-        case .systemShortcut: "macOS 快捷键"
+        case .openApp: L10n.tr("打开 ChatGPT")
+        case .openLink: L10n.tr("打开网页")
+        case .shortcut(AgentProfile.newChat): L10n.tr("新建对话")
+        case .shortcut(AgentProfile.sendDraft): L10n.tr("发送当前草稿")
+        case .shortcut(AgentProfile.stop): L10n.tr("停止生成")
+        case .shortcut: L10n.tr("ChatGPT 快捷键")
+        case .chatBar: L10n.tr("打开 ChatGPT Chat Bar")
+        case .nextAgent: L10n.tr("切换到下一个 Agent")
+        case .dictation: L10n.tr("Codex 听写")
+        case .displaySleep: L10n.tr("显示器休眠")
+        case .toggleDisplays: L10n.tr("关闭或恢复显示器")
+        case .appleMenu: L10n.tr("打开苹果菜单")
+        case .systemShortcut: L10n.tr("macOS 快捷键")
         case let .foregroundKey(keys): keys.label
-        case .lockScreen: "锁定屏幕"
-        case .showDesktop: "显示桌面"
-        case .volumeUp: "提高音量"
-        case .volumeDown: "降低音量"
-        case .mediaChooser: "媒体应用选择器"
-        case .appSwitcher: "切换应用"
+        case .lockScreen: L10n.tr("锁定屏幕")
+        case .showDesktop: L10n.tr("显示桌面")
+        case .volumeUp: L10n.tr("提高音量")
+        case .volumeDown: L10n.tr("降低音量")
+        case .mediaChooser: L10n.tr("媒体应用选择器")
+        case .appSwitcher: L10n.tr("切换应用")
         }
     }
 
@@ -932,8 +1016,8 @@ extension AgentAction {
         case let .shortcut(keys): keys.label
         case .chatBar: "⌥Space"
         case let .systemShortcut(keys): keys.label
-        case .toggleDisplays: "短按关闭支持的外接屏并调低内置屏亮度，再按恢复"
-        case .displaySleep: "唤醒时是否需要密码取决于 macOS 的「锁定屏幕」设置"
+        case .toggleDisplays: L10n.tr("短按关闭支持的外接屏并调低内置屏亮度，再按恢复")
+        case .displaySleep: L10n.tr("唤醒时是否需要密码取决于 macOS 的「锁定屏幕」设置")
         default: nil
         }
     }

@@ -20,13 +20,13 @@ final class MediaSettings {
     }
 
     static let builtIn: [Candidate] = [
-        .init(id: "com.tencent.QQMusicMac", name: "QQ 音乐"),
-        .init(id: "com.youku.mac", name: "优酷"),
-        .init(id: "com.iqiyi.player", name: "爱奇艺"),
-        .init(id: "com.tencent.tenvideo", name: "腾讯视频"),
-        .init(id: "com.netease.163music", name: "网易云音乐"),
-        .init(id: "com.bilibili.bilibiliPC", name: "哔哩哔哩"),
-        .init(id: "com.apple.Music", name: "音乐"),
+        .init(id: "com.tencent.QQMusicMac", name: L10n.tr("QQ 音乐")),
+        .init(id: "com.youku.mac", name: L10n.tr("优酷")),
+        .init(id: "com.iqiyi.player", name: L10n.tr("爱奇艺")),
+        .init(id: "com.tencent.tenvideo", name: L10n.tr("腾讯视频")),
+        .init(id: "com.netease.163music", name: L10n.tr("网易云音乐")),
+        .init(id: "com.bilibili.bilibiliPC", name: L10n.tr("哔哩哔哩")),
+        .init(id: "com.apple.Music", name: L10n.tr("音乐")),
         .init(id: "com.apple.TV", name: "Apple TV"),
         .init(id: "com.colliderli.iina", name: "IINA"),
         .init(id: "com.apple.QuickTimePlayerX", name: "QuickTime Player")
@@ -87,7 +87,7 @@ struct MediaSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("多媒体设置").font(.headline)
+            Text(L10n.tr("多媒体设置")).font(.headline)
             List(candidates) { candidate in
                 let app = installed[candidate.id]
                 Toggle(isOn: selection(for: candidate.id)) {
@@ -101,7 +101,7 @@ struct MediaSettingsView: View {
                         }
                         Text(candidate.name)
                         Spacer()
-                        if app == nil { Text("未检测到安装").font(.caption).foregroundStyle(.secondary) }
+                        if app == nil { Text(L10n.tr("未检测到安装")).font(.caption).foregroundStyle(.secondary) }
                     }
                 }
                 .toggleStyle(.checkbox)
@@ -110,12 +110,12 @@ struct MediaSettingsView: View {
             .listStyle(.bordered)
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
             HStack {
-                Button("添加应用…", action: addApplication)
-                Text("已选 \(selected.count) / \(MediaGrid.limit)").foregroundStyle(.secondary)
+                Button(L10n.tr("添加应用…"), action: addApplication)
+                Text(L10n.format("已选 %@ / %@", String(describing: selected.count), String(describing: MediaGrid.limit))).foregroundStyle(.secondary)
                 Spacer()
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存") { save(previewing: false) }
-                Button("保存并预览") { save(previewing: true) }.keyboardShortcut(.defaultAction)
+                Button(L10n.tr("取消")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L10n.tr("保存")) { save(previewing: false) }
+                Button(L10n.tr("保存并预览")) { save(previewing: true) }.keyboardShortcut(.defaultAction)
             }
         }
         .padding(18)
@@ -146,10 +146,10 @@ struct MediaSettingsView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.applicationBundle]
         panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
-        panel.prompt = "添加"
+        panel.prompt = L10n.tr("添加")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier else {
-            error = "无法识别所选应用。"
+            error = L10n.tr("无法识别所选应用。")
             return
         }
         let name = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
