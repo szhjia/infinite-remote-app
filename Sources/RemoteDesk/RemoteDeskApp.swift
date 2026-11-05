@@ -67,6 +67,12 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private let mediaLauncher = MediaLauncher()
     private(set) var isWorkspaceVisible = false
     private(set) var isRemoteModelVisible = false
+    private var isRemoteAlwaysOnTop = UserDefaults.standard.bool(forKey: RemoteWindows.remoteAlwaysOnTopKey) {
+        didSet {
+            UserDefaults.standard.set(isRemoteAlwaysOnTop, forKey: Self.remoteAlwaysOnTopKey)
+            remote?.level = remoteWindowLevel
+        }
+    }
     private var remote: NSWindow?
     private var configuration: NSWindow?
     private var isTerminating = false
@@ -76,7 +82,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private static let remoteModelItem = NSToolbarItem.Identifier("remoteModel")
     private static let workspaceVisibilityKey = "RemoteDesk.workspaceVisible"
     private static let remoteModelVisibilityKey = "RemoteDesk.remoteModelVisible"
+    private static let remoteAlwaysOnTopKey = "RemoteDesk.remoteAlwaysOnTop"
     private var diagnostics: NSWindow?
+
+    private var remoteWindowLevel: NSWindow.Level { isRemoteAlwaysOnTop ? .floating : .normal }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -179,6 +188,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             panel.parent?.removeChildWindow(panel)
             panel.isMovable = true
         }
+        panel.level = remoteWindowLevel
         panel.orderFront(nil)
     }
 
@@ -218,7 +228,6 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         window.backgroundColor = .clear
         window.hasShadow = false
         window.isMovable = false
-        window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.onDismiss = { [weak self] in self?.setRemoteModelVisible(false) }
         let hosting = NSHostingController(rootView: LiveRemoteView(
@@ -226,7 +235,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             toggleWorkspace: { [weak self] in
                 guard let self else { return }
                 self.setWorkspaceVisible(!self.isWorkspaceVisible)
-            }, hideModel: { [weak self] in self?.setRemoteModelVisible(false) },
+            }, isAlwaysOnTop: Binding(
+                get: { [weak self] in self?.isRemoteAlwaysOnTop == true },
+                set: { [weak self] in self?.isRemoteAlwaysOnTop = $0 }
+            ), hideModel: { [weak self] in self?.setRemoteModelVisible(false) },
             confirmQuit: { [weak self] in self?.confirmQuitFromRemote() }
         ))
         // The device artwork measures the space it receives; AppKit sets the window size.

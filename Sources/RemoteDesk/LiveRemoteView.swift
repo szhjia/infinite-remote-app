@@ -3,11 +3,12 @@ import RemoteCore
 import SwiftUI
 
 struct LiveRemoteView: View {
-    static let preferredHeight = XiaomiBitmap.workspaceWidth * XiaomiBitmap.bodyHeightPerBitmapWidth + 90
+    static let preferredHeight = XiaomiBitmap.workspaceWidth * XiaomiBitmap.bodyHeightPerBitmapWidth
 
     let model: RemoteModel
     let workspaceVisible: () -> Bool
     let toggleWorkspace: () -> Void
+    @Binding var isAlwaysOnTop: Bool
     let hideModel: () -> Void
     let confirmQuit: () -> Void
 
@@ -16,7 +17,6 @@ struct LiveRemoteView: View {
     var body: some View {
         DockedRemoteLayout {
             casing
-            caption
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -31,6 +31,7 @@ struct LiveRemoteView: View {
                 .offset(x: -artWidth * XiaomiBitmap.bodyLeftFraction, y: -artHeight * XiaomiBitmap.bodyTopFraction)
                 .disabled(!model.hasConnectedXiaomi)
         }
+        .background(RemoteDragSurface())
         .overlay(alignment: .topTrailing) {
             if hovering {
                 HStack(spacing: 4) {
@@ -41,6 +42,12 @@ struct LiveRemoteView: View {
             }
         }
         .contentShape(Rectangle())
+        .contextMenu {
+            Text("RemoteDesk · \(model.connectionStatus)")
+            Divider()
+            Button(workspaceVisible() ? "隐藏工作台" : "显示工作台", action: toggleWorkspace)
+            Toggle("窗口置顶", isOn: $isAlwaysOnTop)
+        }
         .onHover { hovering = $0 }
         .onDisappear { hovering = false }
     }
@@ -56,37 +63,6 @@ struct LiveRemoteView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         .help(title)
-    }
-
-    private var caption: some View {
-        let hasDevice = model.connected || !model.ambiguousDevices.isEmpty
-        let ready = model.canReadKeys && model.isEnabled && !model.isDiagnosing
-        let statusColor: Color = ready ? .green : hasDevice ? .blue : .gray
-        return VStack(spacing: 4) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 6, height: 6)
-                    .accessibilityHidden(true)
-                Text(model.connectionStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
-            Text("RemoteDesk").font(.caption.weight(.medium))
-            Button(action: toggleWorkspace) {
-                Text(workspaceVisible() ? "隐藏工作台" : "显示工作台")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
     }
 
     private func help(for key: RemoteKey) -> String {
@@ -109,33 +85,54 @@ private enum XiaomiBitmap {
 
 private struct DockedRemoteLayout: Layout {
     private let gap: CGFloat = 8
-    private let captionSpacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         proposal.replacingUnspecifiedDimensions()
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let availableHeight = max(0, bounds.height - captionSpacing - gap)
-        var artWidth = min(XiaomiBitmap.workspaceWidth, bounds.width,
-                           availableHeight / XiaomiBitmap.bodyHeightPerBitmapWidth)
-        // The caption may wrap as the remote narrows. Refit without letting the casing grow again.
-        for _ in 0..<3 {
-            let captionWidth = artWidth * XiaomiBitmap.bodyWidthFraction
-            let size = subviews[1].sizeThatFits(ProposedViewSize(width: captionWidth, height: nil))
-            let fittedWidth = max(0, availableHeight - size.height) / XiaomiBitmap.bodyHeightPerBitmapWidth
-            guard fittedWidth < artWidth - 0.5 else { break }
-            artWidth = fittedWidth
-        }
+        let artWidth = min(XiaomiBitmap.workspaceWidth,
+                           max(0, bounds.width - gap) / XiaomiBitmap.bodyWidthFraction,
+                           bounds.height / XiaomiBitmap.bodyHeightPerBitmapWidth)
         let bodyWidth = artWidth * XiaomiBitmap.bodyWidthFraction
         let bodyHeight = artWidth * XiaomiBitmap.bodyHeightPerBitmapWidth
         subviews[0].place(at: CGPoint(x: bounds.minX + gap, y: bounds.minY), anchor: .topLeading,
                           proposal: ProposedViewSize(width: bodyWidth, height: bodyHeight))
+    }
+}
 
-        subviews[1].place(at: CGPoint(x: bounds.minX + gap,
-                                      y: bounds.minY + bodyHeight + captionSpacing),
-                          anchor: .topLeading,
-                          proposal: ProposedViewSize(width: bodyWidth, height: nil))
+private struct RemoteDragSurface: NSViewRepresentable {
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
+
+    final class DragView: NSView {
+        private var workspaceDragOffset: NSPoint?
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            workspaceDragOffset = nil
+            guard let window else { return }
+            if let workspace = window.parent {
+                let pointer = window.convertPoint(toScreen: event.locationInWindow)
+                workspaceDragOffset = NSPoint(x: pointer.x - workspace.frame.minX,
+                                              y: pointer.y - workspace.frame.minY)
+            } else if window.isMovable {
+                window.performDrag(with: event)
+            }
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let offset = workspaceDragOffset, let window, let workspace = window.parent else { return }
+            let pointer = window.convertPoint(toScreen: event.locationInWindow)
+            workspace.setFrameOrigin(NSPoint(x: pointer.x - offset.x, y: pointer.y - offset.y))
+            // Programmatic moves can leave the child at its old screen position.
+            window.setFrameTopLeftPoint(NSPoint(x: workspace.frame.maxX, y: workspace.frame.maxY))
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            workspaceDragOffset = nil
+        }
     }
 }
 
