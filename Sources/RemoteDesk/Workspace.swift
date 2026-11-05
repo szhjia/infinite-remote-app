@@ -321,7 +321,7 @@ struct Workspace: View {
         .controlSize(.regular)
         .frame(minHeight: 24)
         .accessibilityLabel("\(key.name)\(prefix ?? "")的功能")
-        .help(action.map(actionLabel) ?? "不分配动作")
+        .help(action.map { $0 == .displaySleep ? ($0.detail ?? actionLabel($0)) : actionLabel($0) } ?? "不分配动作")
         .overlay(alignment: .leading) {
             if let prefix {
                 Text(prefix).font(.caption2).foregroundStyle(.secondary)

@@ -711,7 +711,7 @@ extension AgentAction {
         case .chatBar: "打开 ChatGPT Chat Bar"
         case .nextAgent: "切换到下一个 Agent"
         case .dictation: "Codex 听写"
-        case .displaySleep: "关闭显示器"
+        case .displaySleep: "显示器休眠"
         case .appleMenu: "打开苹果菜单"
         case .systemShortcut: "macOS 快捷键"
         case let .foregroundKey(keys): keys.label
@@ -730,6 +730,7 @@ extension AgentAction {
         case let .shortcut(keys): keys.label
         case .chatBar: "⌥Space"
         case let .systemShortcut(keys): keys.label
+        case .displaySleep: "唤醒时是否需要密码取决于 macOS 的「锁定屏幕」设置"
         default: nil
         }
     }
@@ -744,13 +745,13 @@ struct RemoteKey: Identifiable {
         .init(id: "power", name: "电源", symbol: "power"),
         .init(id: "voice", name: "语音", symbol: "mic"),
         .init(id: "up", name: "方向上", symbol: "chevron.up"),
-        .init(id: "left", name: "方向左", symbol: "chevron.left"),
-        .init(id: "ok", name: "确定", symbol: "circle.inset.filled"),
-        .init(id: "right", name: "方向右", symbol: "chevron.right"),
         .init(id: "down", name: "方向下", symbol: "chevron.down"),
+        .init(id: "left", name: "方向左", symbol: "chevron.left"),
+        .init(id: "right", name: "方向右", symbol: "chevron.right"),
+        .init(id: "ok", name: "确认", symbol: "circle.inset.filled"),
         .init(id: "back", name: "返回", symbol: "chevron.left"),
-        .init(id: "plus", name: "音量加", symbol: "plus"),
         .init(id: "home", name: "主页", symbol: "house"),
+        .init(id: "plus", name: "音量加", symbol: "plus"),
         .init(id: "minus", name: "音量减", symbol: "minus"),
         .init(id: "menu", name: "菜单", symbol: "line.3.horizontal"),
         .init(id: "tv", name: "直播", symbol: "tv")
