@@ -92,10 +92,45 @@ func upgradesOldCodexPresetWithoutChangingLearnedKeysOrCustomizedActions(customi
     #expect(codex.name == "ChatGPT")
     #expect(codex.actions["menu"] == .appleMenu)
     #expect(codex.actions["power"] == .displaySleep)
+    #expect(codex.actions["power-long"] == .lockScreen)
     #expect(codex.actions["voice"] == .dictation)
     #expect(codex.actions["ok"] == .shortcut(customized ? custom : AgentProfile.sendDraft))
     #expect(codex.actions["home"] == (customized ? nil : .shortcut(AgentProfile.newChat)))
     #expect(codex.actions["back"] == (customized ? nil : .shortcut(AgentProfile.stop)))
+}
+
+@Test @MainActor
+func restoresLastSavedProfileAndUpdatesOnlyTheOldChatGPTPreset() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let storeURL = directory.appending(path: "configuration.json")
+    func openModel() -> RemoteModel {
+        RemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
+    }
+
+    #expect(openModel().profile == .defaults)
+
+    var previousPreset = AgentProfile.chatGPT
+    previousPreset.actions.removeValue(forKey: "power-long")
+    let custom = AgentProfile(name: "自定义", target: previousPreset.target, actions: previousPreset.actions)
+    var previous = Configuration()
+    previous.version = 4
+    previous.agents = [previousPreset, custom]
+    previous.activeAgentID = custom.id
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let original = try JSONEncoder().encode(previous)
+    try original.write(to: storeURL)
+
+    let migrated = openModel()
+    #expect(try Data(contentsOf: storeURL.appendingPathExtension("v4.backup")) == original)
+    #expect(migrated.profile == custom)
+    #expect(migrated.profiles.contains(AgentProfile.chatGPT))
+    #expect(migrated.selectProfile(AgentProfile.chatGPT.id))
+    #expect(openModel().editableActions["power-long"] == .lockScreen)
+
+    migrated.setAction(nil, for: "power-long")
+    #expect(migrated.saveConfigurationChanges())
+    #expect(openModel().profile == previousPreset)
 }
 
 @Test @MainActor
@@ -109,11 +144,22 @@ func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws 
     let storeURL = directory.appending(path: "configuration.json")
 
     var dispatched: [(AgentAction, AppTarget?)] = []
+    // Version 3 users keep their existing active ChatGPT preset and mappings.
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    var old = Configuration()
+    old.version = 3
+    old.agents = [.chatGPT]
+    old.activeAgentID = AgentProfile.chatGPT.id
+    let original = try JSONEncoder().encode(old)
+    try original.write(to: storeURL)
+
     let runAction: @MainActor (AgentAction, AppTarget?) async throws -> Void = { action, target in
         dispatched.append((action, target))
     }
     let input = InputFixture(devices: [xiaomi, other])
     let model = RemoteModel(hid: input, storeURL: storeURL, runAction: runAction)
+    #expect(try Data(contentsOf: storeURL.appendingPathExtension("v3.backup")) == original)
+    #expect(model.profiles.first == AgentProfile.defaults)
 
     model.refreshPermissions()
     model.selectDevice(xiaomi)
@@ -130,7 +176,7 @@ func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws 
     #expect(model.learning == "ok")
     input.press(xiaomi, enter)
     #expect(model.learning == nil)
-    #expect(model.learnedCount == 1)
+    #expect(model.editableRemote?.keys.count == 1)
     #expect(!model.isRunning)
 
     let customShortcut = RemoteCore.KeyboardShortcut(keyCode: 45, modifiers: [.command], keyName: "N")
@@ -139,14 +185,15 @@ func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws 
     #expect(model.profile?.actions["ok"] == .shortcut(AgentProfile.sendDraft))
     #expect(model.config.activeRemote?.input(for: "ok") == nil)
     model.pressVirtualKey("ok")
-    #expect(!model.isRunning)
+    try await waitForAction(on: model)
+    #expect(dispatched.map(\.0) == [.shortcut(AgentProfile.sendDraft)])
     model.saveConfigurationChanges()
     #expect(!model.hasConfigurationChanges)
 
     let reopenedInput = InputFixture(devices: [xiaomi, other])
     let reopened = RemoteModel(hid: reopenedInput, storeURL: storeURL, runAction: runAction)
     #expect(reopenedInput.selectedDevice == xiaomi)
-    #expect(reopened.learnedCount == 1)
+    #expect(reopened.editableRemote?.keys.count == 1)
 
     reopened.refreshPermissions()
     reopenedInput.press(xiaomi, enter)
@@ -161,13 +208,13 @@ func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws 
     reopened.isEnabled = true
     reopenedInput.press(xiaomi, enter)
     try await waitForAction(on: reopened)
-    try #require(dispatched.count == 1)
-    #expect(dispatched[0].0 == .shortcut(customShortcut))
-    #expect(dispatched[0].1?.bundleID == "com.openai.codex")
+    try #require(dispatched.count == 2)
+    #expect(dispatched[1].0 == .shortcut(customShortcut))
+    #expect(dispatched[1].1?.bundleID == "com.openai.codex")
 
     reopenedInput.press(other, enter)
     #expect(!reopened.isRunning)
-    #expect(dispatched.count == 1)
+    #expect(dispatched.count == 2)
 }
 
 @MainActor
@@ -182,7 +229,7 @@ private func waitForAction(on model: RemoteModel) async throws {
 }
 
 @Test @MainActor
-func liveRemoteOnlyUsesArtworkForTheSelectedOnlineXiaomi() {
+func liveRemoteOnlyEnablesVirtualButtonsForTheSelectedOnlineXiaomi() {
     let xiaomi = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米蓝牙语音遥控器")
     let other = DeviceID(vendor: 1, product: 2, name: "通用遥控器")
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
@@ -191,15 +238,15 @@ func liveRemoteOnlyUsesArtworkForTheSelectedOnlineXiaomi() {
     let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"), runAction: { _, _ in })
     model.refreshPermissions()
     #expect(model.connectedDevice == xiaomi)
-    #expect(model.showsXiaomiArtwork)
+    #expect(model.hasConnectedXiaomi)
     #expect(!model.canReadKeys)
     input.onDevices([other])
     #expect(model.connectedDevice == nil)
-    #expect(!model.showsXiaomiArtwork)
+    #expect(!model.hasConnectedXiaomi)
 
     model.selectDevice(other)
     #expect(model.connectedDevice == nil)
-    #expect(!model.showsXiaomiArtwork)
+    #expect(!model.hasConnectedXiaomi)
 }
 
 @Test @MainActor
@@ -217,11 +264,9 @@ func diagnosticsSuspendHardwareAndVirtualActionsUntilClosed() async throws {
     model.refreshPermissions()
     model.selectDevice(device)
 
-    model.pressVirtualKey("ok")
-    #expect(!model.isRunning)
     model.startLearning()
     input.press(device, enter)
-    #expect(model.learnedCount == 1)
+    #expect(model.editableRemote?.keys.count == 1)
     model.saveConfigurationChanges()
 
     model.startLearning()
@@ -243,10 +288,203 @@ func diagnosticsSuspendHardwareAndVirtualActionsUntilClosed() async throws {
     model.isEnabled = true
     model.pressVirtualKey("ok")
     try await waitForAction(on: model)
-    #expect(dispatched == [.shortcut(AgentProfile.sendDraft)])
+    #expect(dispatched == [AgentProfile.defaults.actions["ok"]!])
     input.onDevices([])
     model.pressVirtualKey("ok")
     #expect(!model.isRunning)
+}
+
+@Test @MainActor
+func powerDispatchesExactlyOneActionAndDropsInterruptedPresses() async throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let code = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x30, report: 1, value: 1)
+    let origin = RemoteInputOrigin(endpoint: 8, cookie: 1)
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var dispatched: [AgentAction] = []
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                            powerHoldDelay: .milliseconds(50)) { action, _ in dispatched.append(action) }
+    model.refreshPermissions()
+    model.selectSlot("power")
+    model.startLearning()
+    input.onEvent(device, .pressed(code, origin: origin))
+    input.onEvent(device, .released(code, origin: origin))
+    #expect(model.saveConfigurationChanges())
+
+    input.onEvent(device, .pressed(code, origin: origin))
+    #expect(dispatched.isEmpty)
+    input.onEvent(device, .released(code, origin: origin))
+    try await waitForAction(on: model)
+    #expect(dispatched == [.displaySleep])
+
+    input.onEvent(device, .pressed(code, origin: origin))
+    input.onEvent(device, .pressed(code, origin: origin))
+    try await waitUntil { dispatched.count == 2 && !model.isRunning }
+    input.onEvent(device, .released(code, origin: origin))
+    #expect(dispatched == [.displaySleep, .lockScreen])
+
+    input.onEvent(device, .pressed(code, origin: origin))
+    model.isEnabled = false
+    model.isEnabled = true
+    input.onEvent(device, .released(code, origin: origin))
+    input.onEvent(device, .pressed(code, origin: origin))
+    input.onEvent(device, .endpointClosed(origin.endpoint))
+    try await Task.sleep(for: .milliseconds(80))
+    #expect(dispatched == [.displaySleep, .lockScreen])
+}
+
+@Test @MainActor
+func namedProfilesAndImportsCannotOverwriteTheBuiltInOrLoseDrafts() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let storeURL = directory.appending(path: "configuration.json")
+    let model = RemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
+    model.setAction(.appleMenu, for: "menu")
+    #expect(!model.saveConfigurationChanges())
+    #expect(!model.saveConfigurationChanges(as: " 默认配置 "))
+    #expect(model.profile == AgentProfile.defaults)
+    #expect(model.saveConfigurationChanges(as: " Café "))
+    let saved = try #require(model.profile)
+    let file = directory.appending(path: "profile.json")
+    try ProfileArchive(saved).write(to: file)
+    let archive = try ProfileArchive.read(from: file)
+    #expect(!model.importProfile(archive, as: "cafe\u{301}", discardingDraft: false))
+    model.restoreDefaultActions()
+    #expect(!model.selectProfile(AgentProfile.defaults.id))
+    #expect(!model.importProfile(archive, as: "备份", discardingDraft: false))
+    #expect(model.hasConfigurationChanges)
+    #expect(model.importProfile(archive, as: "备份", discardingDraft: true))
+    let reopened = RemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
+    #expect(reopened.profiles.map(\.name) == ["默认配置", "Café", "备份"])
+    #expect(reopened.profile?.actions["menu"] == .appleMenu)
+    #expect(reopened.profiles.first == AgentProfile.defaults)
+}
+
+@Test @MainActor
+func xiaomiButtonsWorkWithoutLearningAndUseTheSavedAction() async throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var dispatched: [AgentAction] = []
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
+        dispatched.append(action)
+    }
+    model.refreshPermissions()
+    func press(_ usage: Int) {
+        input.press(device, InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                                      usage: Int(UInt32.max), report: 1, value: usage))
+    }
+
+    press(0x80)
+    try await waitForAction(on: model)
+    press(0x81)
+    try await waitForAction(on: model)
+    #expect(dispatched == [.volumeUp, .volumeDown])
+    press(0x52)
+    #expect(model.hardwarePress?.key == "up")
+    #expect(!model.isRunning) // The system already delivers this arrow event.
+    var openedSwitcher = false
+    model.onSwitchApps = { openedSwitcher = true }
+    press(0x4A)
+    #expect(openedSwitcher)
+
+    model.setAction(.showDesktop, for: "plus")
+    #expect(model.hasConfigurationChanges)
+    #expect(model.saveConfigurationChanges(as: "自定义"))
+    press(0x80)
+    try await waitForAction(on: model)
+    #expect(dispatched == [.volumeUp, .volumeDown, .showDesktop])
+    #expect(model.editableRemote?.keys.isEmpty == true)
+}
+
+@Test @MainActor
+func xiaomiHomeAliasesToggleAppSwitcherOncePerPhysicalPress() {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let array = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                          usage: Int(UInt32.max), report: 1, value: 0x4A)
+    let direct = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                           usage: 0x4A, report: 1, value: 1)
+    let arrayOrigin = RemoteInputOrigin(endpoint: 8, cookie: 1)
+    let directOrigin = RemoteInputOrigin(endpoint: 8, cookie: 2)
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                            runAction: { _, _ in })
+    model.refreshPermissions()
+    var visible = false
+    var toggles = 0
+    model.onSwitchApps = { visible = true; toggles += 1 }
+    model.onMediaKey = { slot, _ in
+        guard visible, slot == "home" else { return false }
+        visible = false
+        toggles += 1
+        return true
+    }
+
+    input.onEvent(device, .pressed(array, origin: arrayOrigin))
+    input.onEvent(device, .pressed(direct, origin: directOrigin))
+    #expect(visible)
+    #expect(toggles == 1)
+    input.onEvent(device, .released(array, origin: arrayOrigin))
+    input.onEvent(device, .released(direct, origin: directOrigin))
+
+    input.onEvent(device, .pressed(direct, origin: directOrigin))
+    input.onEvent(device, .pressed(array, origin: arrayOrigin))
+    #expect(!visible)
+    #expect(toggles == 2)
+}
+
+@Test @MainActor
+func mediaAndRunningAppChoosersConsumeNavigationBeforeConfiguredActions() throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let tv = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x61, report: 1, value: 1)
+    let right = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x42, report: 1, value: 1)
+    let home = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x45, report: 1, value: 1)
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
+        Issue.record("Unexpected action while selecting media: \(action)")
+    }
+    model.refreshPermissions()
+    for (slot, code) in [("tv", tv), ("right", right), ("home", home)] {
+        model.selectSlot(slot)
+        model.startLearning()
+        input.press(device, code)
+    }
+    try #require(model.saveConfigurationChanges())
+
+    var showing = false
+    var switchingApps = false
+    var navigation: [String] = []
+    model.onShowMedia = { showing = true }
+    model.onSwitchApps = { showing = true; switchingApps = true }
+    model.onDismissMedia = { showing = false }
+    model.onMediaKey = { slot, nativeKeyboard in
+        guard showing else { return false }
+        #expect(!nativeKeyboard)
+        navigation.append(slot)
+        return true
+    }
+    input.press(device, tv)
+    #expect(showing)
+    input.press(device, right)
+    #expect(navigation == ["right"])
+    #expect(!model.isRunning)
+    model.isEnabled = false
+    #expect(!showing)
+    model.isEnabled = true
+    input.press(device, home)
+    #expect(showing && switchingApps)
+    input.press(device, right)
+    #expect(navigation == ["right", "right"])
 }
 
 @MainActor

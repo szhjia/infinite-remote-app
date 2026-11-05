@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import RemoteCore
 
@@ -28,7 +29,8 @@ enum AgentRunner {
     static func run(_ action: AgentAction, target: AppTarget?) async throws {
         switch action {
         case .openApp:
-            _ = try await openApp(target)
+            let app = try await openApp(target)
+            raiseWindow(of: app)
         case let .shortcut(shortcut):
             guard shortcut.platform == "macOS" else { throw Failure.unsupportedKey }
             guard CGPreflightPostEventAccess() else { throw Failure.permission }
@@ -40,7 +42,17 @@ enum AgentRunner {
             try SystemActions.openAppleMenu()
         case let .systemShortcut(shortcut):
             try SystemActions.send(shortcut)
-        case .dictation, .openLink, .chatBar, .nextAgent:
+        case let .foregroundKey(shortcut):
+            guard shortcut.platform == "macOS" else { throw Failure.unsupportedKey }
+            guard CGPreflightPostEventAccess() else { throw Failure.permission }
+            try post(shortcut, pid: nil)
+        case .lockScreen:
+            try SystemActions.lockScreen()
+        case .showDesktop:
+            try SystemActions.showDesktop()
+        case .volumeUp, .volumeDown:
+            try SystemActions.changeVolume(up: action == .volumeUp)
+        case .mediaChooser, .appSwitcher, .dictation, .openLink, .chatBar, .nextAgent:
             throw Failure.unsupportedAction
         }
     }
@@ -50,6 +62,18 @@ enum AgentRunner {
         let options = NSWorkspace.OpenConfiguration()
         options.activates = true
         return try await NSWorkspace.shared.openApplication(at: url, configuration: options)
+    }
+
+    private static func raiseWindow(of app: NSRunningApplication) {
+        guard AXIsProcessTrusted() else { return }
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        guard let window = Accessibility.element(application, kAXFocusedWindowAttribute)
+                ?? Accessibility.element(application, kAXMainWindowAttribute)
+                ?? (Accessibility.value(application, kAXWindowsAttribute) as? [AXUIElement])?.first else { return }
+        if Accessibility.value(window, kAXMinimizedAttribute) as? Bool == true {
+            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        }
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     }
 
     private static func post(_ shortcut: KeyboardShortcut, pid: pid_t?) throws {

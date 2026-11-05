@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import IOKit
 import RemoteCore
 
 @MainActor
@@ -63,6 +64,31 @@ enum SystemActions {
             catch { continuation.resume(throwing: error) }
         }
         guard status == 0 else { throw Failure.displaySleepFailed }
+    }
+
+    static func lockScreen() throws {
+        guard CGPreflightPostEventAccess() else { throw Failure.permission }
+        try AgentRunner.post(keyCode: UInt16(kVK_ANSI_Q), flags: [.maskControl, .maskCommand], pid: nil)
+    }
+
+    static func showDesktop() throws {
+        guard CGPreflightPostEventAccess() else { throw Failure.permission }
+        try AgentRunner.post(keyCode: UInt16(kVK_F11), flags: [.maskSecondaryFn], pid: nil)
+    }
+
+    static func changeVolume(up: Bool) throws {
+        guard CGPreflightPostEventAccess() else { throw Failure.permission }
+        let code = up ? NX_KEYTYPE_SOUND_UP : NX_KEYTYPE_SOUND_DOWN
+        for state in [NX_KEYDOWN, NX_KEYUP] {
+            let flags = Int(state) << 8
+            let event = NSEvent.otherEvent(with: .systemDefined, location: .zero,
+                                           modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags)),
+                                           timestamp: 0, windowNumber: 0, context: nil,
+                                           subtype: Int16(NX_SUBTYPE_AUX_CONTROL_BUTTONS),
+                                           data1: (Int(code) << 16) | flags, data2: -1)
+            guard let cgEvent = event?.cgEvent else { throw AgentRunner.Failure.unsupportedAction }
+            cgEvent.post(tap: .cghidEventTap)
+        }
     }
 
     static func openAppleMenu() throws {

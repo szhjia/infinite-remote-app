@@ -106,6 +106,13 @@ public enum AgentAction: Codable, Equatable, Sendable {
     case displaySleep
     case appleMenu
     case systemShortcut(SystemHotKey)
+    case foregroundKey(KeyboardShortcut)
+    case lockScreen
+    case showDesktop
+    case volumeUp
+    case volumeDown
+    case mediaChooser
+    case appSwitcher
 }
 
 public struct AppTarget: Codable, Equatable, Sendable {
@@ -139,37 +146,57 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
     public static let newChat = KeyboardShortcut(keyCode: 45, modifiers: [.command], keyName: "N")
     public static let sendDraft = KeyboardShortcut(keyCode: 36, modifiers: [.command], keyName: "Return")
     public static let stop = KeyboardShortcut(keyCode: 53, modifiers: [], keyName: "Esc")
+    public static let defaults = AgentProfile(
+        id: "default", name: "默认配置", target: .init(bundleID: "com.openai.codex"),
+        actions: [
+            "power": .displaySleep, "power-long": .lockScreen, "voice": .dictation,
+            "up": .foregroundKey(.init(keyCode: 126, modifiers: [], keyName: "↑")),
+            "left": .foregroundKey(.init(keyCode: 123, modifiers: [], keyName: "←")),
+            "right": .foregroundKey(.init(keyCode: 124, modifiers: [], keyName: "→")),
+            "down": .foregroundKey(.init(keyCode: 125, modifiers: [], keyName: "↓")),
+            "ok": .foregroundKey(.init(keyCode: 36, modifiers: [], keyName: "Return")),
+            "back": .foregroundKey(stop), "home": .appSwitcher, "plus": .volumeUp, "minus": .volumeDown,
+            "menu": .openApp, "tv": .mediaChooser
+        ]
+    )
 
     public static let chatGPT = AgentProfile(
         id: "codex", name: "ChatGPT", target: .init(bundleID: "com.openai.codex"),
         actions: [
-            "power": .displaySleep, "voice": .dictation, "menu": .appleMenu,
+            "power": .displaySleep, "power-long": .lockScreen, "voice": .dictation, "menu": .appleMenu,
             "home": .shortcut(newChat), "ok": .shortcut(sendDraft), "back": .shortcut(stop)
         ]
     )
 
-    public static let presets = [chatGPT]
-
 }
 
 public struct Configuration: Codable, Equatable, Sendable {
-    public static let currentVersion = 3
+    public static let currentVersion = 5
     public var version = Self.currentVersion
-    public var activeAgentID = AgentProfile.chatGPT.id
+    public var activeAgentID = AgentProfile.defaults.id
     public var selectedDevice: DeviceID?
     public var remotes: [RemoteMap] = []
-    public var agents = AgentProfile.presets
+    public var agents: [AgentProfile] = []
 
     public init() {}
 
     public mutating func upgradeLegacy() {
+        if version == 3 || version == 4 {
+            var previousPreset = AgentProfile.chatGPT
+            previousPreset.actions.removeValue(forKey: "power-long")
+            if let index = agents.firstIndex(of: previousPreset) {
+                agents[index] = .chatGPT
+            }
+            version = Self.currentVersion
+            return
+        }
         guard version == 1 || version == 2 else { return }
         var profile = AgentProfile.chatGPT
         let codexProfiles = agents.filter { $0.target?.bundleID == profile.target?.bundleID }
         let legacy = codexProfiles.first { $0.id == activeAgentID } ?? codexProfiles.first { $0.id == profile.id }
         if let legacy, !(version == 1 && legacy == AgentProfile.originalCodex) {
             profile.target = legacy.target
-            profile.actions = ["power": .displaySleep, "voice": .dictation]
+            profile.actions = ["power": .displaySleep, "power-long": .lockScreen, "voice": .dictation]
             for (slot, action) in legacy.actions {
                 switch action {
                 case .nextAgent where slot == "menu":
@@ -195,7 +222,10 @@ public struct Configuration: Codable, Equatable, Sendable {
         version = Self.currentVersion
     }
 
-    public var activeAgent: AgentProfile? { agents.first { $0.id == activeAgentID } }
+    public var activeAgent: AgentProfile? {
+        if activeAgentID == AgentProfile.defaults.id { return .defaults }
+        return agents.first { $0.id == activeAgentID } ?? .defaults
+    }
     public var activeRemote: RemoteMap? { remotes.first { $0.device == selectedDevice } }
 
     public mutating func selectDevice(_ device: DeviceID) {

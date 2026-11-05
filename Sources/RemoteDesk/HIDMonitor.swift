@@ -21,7 +21,7 @@ protocol RemoteInputSource: AnyObject {
     func refresh() -> InputMonitorState
 }
 
-struct RemoteInputOrigin: Equatable {
+struct RemoteInputOrigin: Hashable {
     let endpoint: UInt64
     let cookie: Int
 }

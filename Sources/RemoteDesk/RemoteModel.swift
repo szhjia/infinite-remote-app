@@ -42,6 +42,8 @@ final class RemoteModel {
             if !isEnabled {
                 cancelLearning()
                 cancelDictation()
+                cancelPowerPress()
+                onDismissMedia?()
             }
         }
     }
@@ -60,6 +62,14 @@ final class RemoteModel {
     private var hardwareTask: Task<Void, Never>?
     private var hardwareDown: (code: InputCode, origin: RemoteInputOrigin?, time: ContinuousClock.Instant)?
     private var learningTask: Task<Void, Never>?
+    private let powerHoldDelay: Duration
+    private var powerTask: Task<Void, Never>?
+    private var powerPress: (code: InputCode, origin: RemoteInputOrigin?, started: ContinuousClock.Instant, fired: Bool)?
+    private var homePressOrigins: Set<RemoteInputOrigin> = []
+    var onShowMedia: (() -> Void)?
+    var onSwitchApps: (() -> Void)?
+    var onMediaKey: ((String, Bool) -> Bool)?
+    var onDismissMedia: (() -> Void)?
 
     convenience init() {
         let directory = URL.applicationSupportDirectory.appending(path: "RemoteDesk", directoryHint: .isDirectory)
@@ -69,18 +79,20 @@ final class RemoteModel {
 
     init(hid: any RemoteInputSource, storeURL: URL,
          dictation: DictationController = DictationController(),
+         powerHoldDelay: Duration = .milliseconds(600),
          runAction: @escaping @MainActor (AgentAction, AppTarget?) async throws -> Void) {
         self.dictation = dictation
         self.hid = hid
         self.storeURL = storeURL
         self.runAction = runAction
+        self.powerHoldDelay = powerHoldDelay
         var didUpgrade = false
         do {
             let original = try Data(contentsOf: storeURL)
             let decoded = try JSONDecoder().decode(Configuration.self, from: original)
             if decoded.version == Configuration.currentVersion {
                 config = decoded
-            } else if decoded.version == 1 || decoded.version == 2 {
+            } else if (1..<Configuration.currentVersion).contains(decoded.version) {
                 config = decoded
                 config.upgradeLegacy()
                 do {
@@ -121,16 +133,14 @@ final class RemoteModel {
 
     var connectedDevice: DeviceID? { config.selectedDevice.flatMap { devices.contains($0) ? $0 : nil } }
     var connected: Bool { connectedDevice != nil }
-    var showsXiaomiArtwork: Bool { connectedDevice?.isSupportedRemote == true }
+    var hasConnectedXiaomi: Bool { connectedDevice?.isSupportedRemote == true }
     var canReadKeys: Bool {
         connected && monitorState == .listening && !(connectedDevice.map(ambiguousDevices.contains) ?? false)
     }
     var selectableDevices: [DeviceID] { devices.filter { !ambiguousDevices.contains($0) } }
-    var learnedCount: Int {
-        let keys = Set(RemoteKey.xiaomi.map(\.id))
-        return editableRemote?.keys.count(where: { keys.contains($0.slot) }) ?? 0
-    }
     var profile: AgentProfile? { config.activeAgent }
+    var profiles: [AgentProfile] { [.defaults] + config.agents.filter { $0.id != AgentProfile.defaults.id } }
+    var needsProfileName: Bool { profile?.id == AgentProfile.defaults.id && draftActions != nil }
     var editableActions: [String: AgentAction] { draftActions ?? profile?.actions ?? [:] }
     var editableRemote: RemoteMap? {
         guard let saved = config.activeRemote else { return nil }
@@ -155,9 +165,12 @@ final class RemoteModel {
     private func updateMonitorState(_ state: InputMonitorState) {
         monitorState = state
         if !canReadKeys {
+            homePressOrigins.removeAll()
             cancelLearning()
             cancelDictation()
             clearHardwarePress()
+            cancelPowerPress()
+            onDismissMedia?()
         }
     }
 
@@ -172,6 +185,8 @@ final class RemoteModel {
             cancelLearning()
             cancelDictation()
             clearHardwarePress()
+            cancelPowerPress()
+            onDismissMedia?()
         }
     }
 
@@ -184,6 +199,8 @@ final class RemoteModel {
             cancelLearning()
             cancelDictation()
             clearHardwarePress()
+            cancelPowerPress()
+            onDismissMedia?()
         }
     }
 
@@ -212,9 +229,12 @@ final class RemoteModel {
     func selectDevice(_ id: DeviceID) {
         guard id.isSupportedRemote, devices.contains(id), !ambiguousDevices.contains(id),
               config.selectedDevice != id else { return }
+        homePressOrigins.removeAll()
         cancelLearning()
         cancelDictation()
         clearHardwarePress()
+        cancelPowerPress()
+        onDismissMedia?()
         config.selectDevice(id)
         hid.selectedDevice = id
         slot = "ok"
@@ -233,6 +253,8 @@ final class RemoteModel {
         guard canReadKeys, isEnabled, !isDiagnosing else { return }
         cancelLearning()
         cancelDictation()
+        cancelPowerPress()
+        onDismissMedia?()
         learning = slot
         feedback = nil
         error = nil
@@ -258,7 +280,7 @@ final class RemoteModel {
 
     func setAction(_ action: AgentAction?, for slot: String) {
         guard let saved = profile?.actions,
-              RemoteKey.xiaomi.contains(where: { $0.id == slot }) else { return }
+              slot == "power-long" || RemoteKey.xiaomi.contains(where: { $0.id == slot }) else { return }
         cancelLearning()
         var actions = editableActions
         actions[slot] = action
@@ -267,19 +289,82 @@ final class RemoteModel {
         error = nil
     }
 
-    func saveConfigurationChanges() {
-        guard hasConfigurationChanges, learning == nil else { return }
+    func restoreDefaultActions() {
+        cancelLearning()
+        let defaults = AgentProfile.defaults.actions
+        draftActions = profile?.actions == defaults ? nil : defaults
+        feedback = draftActions == nil ? "当前已使用默认按键。" : "已载入默认按键，保存后生效。"
+        error = nil
+    }
+
+    @discardableResult
+    func saveConfigurationChanges(as name: String? = nil) -> Bool {
+        guard hasConfigurationChanges, learning == nil else { return false }
         var updated = config
-        if let draftActions, let index = updated.agents.firstIndex(where: { $0.id == updated.activeAgentID }) {
-            updated.agents[index].actions = draftActions
+        if let draftActions {
+            if needsProfileName {
+                guard let name = availableProfileName(name) else { return false }
+                let copy = AgentProfile(name: name, target: AgentProfile.defaults.target, actions: draftActions)
+                updated.agents.append(copy)
+                updated.activeAgentID = copy.id
+            } else if let index = updated.agents.firstIndex(where: { $0.id == updated.activeAgentID }) {
+                updated.agents[index].actions = draftActions
+            }
         }
         updated.remotes = updated.remotes.map { draftRemotes[$0.device] ?? $0 }
-        guard save(updated) else { return }
+        guard save(updated) else { return false }
+        cancelPowerPress()
         cancelDictation()
+        onDismissMedia?()
         draftActions = nil
         draftRemotes = [:]
         error = nil
         feedback = "配置已保存"
+        return true
+    }
+
+    @discardableResult
+    func selectProfile(_ id: String, discardingDraft: Bool = false) -> Bool {
+        guard profiles.contains(where: { $0.id == id }), profile?.id != id,
+              discardingDraft || !hasConfigurationChanges else { return false }
+        var updated = config
+        updated.activeAgentID = id
+        guard save(updated) else { return false }
+        discardConfigurationChanges()
+        cancelPowerPress()
+        cancelDictation()
+        onDismissMedia?()
+        return true
+    }
+
+    @discardableResult
+    func importProfile(_ archive: ProfileArchive, as name: String, discardingDraft: Bool) -> Bool {
+        guard discardingDraft || !hasConfigurationChanges, let name = availableProfileName(name) else { return false }
+        let copy = AgentProfile(name: name, target: AgentProfile.defaults.target, actions: archive.actions)
+        var updated = config
+        updated.agents.append(copy)
+        updated.activeAgentID = copy.id
+        guard save(updated) else { return false }
+        discardConfigurationChanges()
+        cancelPowerPress()
+        cancelDictation()
+        onDismissMedia?()
+        feedback = "配置已导入"
+        return true
+    }
+
+    private func availableProfileName(_ proposed: String?) -> String? {
+        let name = proposed?.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping ?? ""
+        guard !name.isEmpty else {
+            error = "请输入配置名称。"
+            return nil
+        }
+        guard !profiles.contains(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping.lowercased() == name.lowercased() }) else {
+            error = "此配置名称已存在。"
+            return nil
+        }
+        return name
     }
 
     func discardConfigurationChanges() {
@@ -294,6 +379,8 @@ final class RemoteModel {
         if active {
             cancelLearning()
             cancelDictation()
+            cancelPowerPress()
+            onDismissMedia?()
         }
         isDiagnosing = active
     }
@@ -309,10 +396,7 @@ final class RemoteModel {
             feedback = "遥控触发已暂停"
             return
         }
-        guard config.activeRemote?.input(for: id) != nil else {
-            feedback = "此键尚未录入"
-            return
-        }
+        if onMediaKey?(id, false) == true { return }
         guard let action = profile?.actions[id] else {
             feedback = "此键尚未分配动作"
             return
@@ -328,30 +412,36 @@ final class RemoteModel {
         guard config.selectedDevice == device, canReadKeys else { return }
         switch event {
         case let .pressed(input, origin):
-            receivePress(device, input, origin: origin)
+            receivePress(input, slot: config.match(device: device, input: input) ?? input.xiaomi2ProSlot, origin: origin)
         case let .released(input, origin):
-            let name = config.match(device: device, input: input).flatMap { id in
+            if let origin { homePressOrigins.remove(origin) }
+            let slot = config.match(device: device, input: input) ?? input.xiaomi2ProSlot
+            let name = slot.flatMap { id in
                 RemoteKey.xiaomi.first { $0.id == id }?.name
             }
             record("松开 · \(name.map { $0 + " · " } ?? "")\(input.label)")
             finishHardwarePress(input, origin: origin)
+            finishPowerPress(input, origin: origin)
             if let held = dictationInput, held.code == input, held.origin == origin {
                 dictation.release()
                 if !dictation.phase.active { dictationInput = nil }
             }
         case let .replaced(input, origin):
+            homePressOrigins.remove(origin)
+            if powerPress?.code == input, powerPress?.origin == origin { cancelPowerPress() }
             if let down = hardwareDown, down.code == input, down.origin == origin { clearHardwarePress() }
             if let held = dictationInput, held.code == input, held.origin == origin {
                 cancelDictation()
             }
         case let .endpointClosed(endpoint):
+            homePressOrigins = homePressOrigins.filter { $0.endpoint != endpoint }
+            if powerPress?.origin?.endpoint == endpoint { cancelPowerPress() }
             if hardwareDown?.origin?.endpoint == endpoint { clearHardwarePress() }
             if dictationInput?.origin?.endpoint == endpoint { cancelDictation() }
         }
     }
 
-    private func receivePress(_ device: DeviceID, _ input: InputCode, origin: RemoteInputOrigin?) {
-        let knownSlot = config.match(device: device, input: input)
+    private func receivePress(_ input: InputCode, slot knownSlot: String?, origin: RemoteInputOrigin?) {
         let visibleSlot = knownSlot.flatMap { candidate in RemoteKey.xiaomi.first { $0.id == candidate } }
         record("按下 · \(visibleSlot.map { $0.name + " · " } ?? "")\(input.label)")
 
@@ -367,9 +457,26 @@ final class RemoteModel {
             return
         }
         guard let visibleSlot else { return }
+        // The RC003 reports Home through both its keyboard array and a discrete element.
+        if visibleSlot.id == "home", input.xiaomi2ProSlot == "home", let origin {
+            let wasHeld = !homePressOrigins.isEmpty
+            homePressOrigins.insert(origin)
+            guard !wasHeld else { return }
+        }
         showHardwarePress(visibleSlot.id, code: input, origin: origin)
-        guard isEnabled, !isDiagnosing, !isRunning, !dictation.phase.active,
-              let action = profile?.actions[visibleSlot.id] else { return }
+        guard isEnabled, !isDiagnosing, !isRunning, !dictation.phase.active else { return }
+        if onMediaKey?(visibleSlot.id, input.matchesNavigationKey(visibleSlot.id)) == true { return }
+        if visibleSlot.id == "power" {
+            startPowerPress(input, origin: origin)
+            return
+        }
+        guard let action = profile?.actions[visibleSlot.id] else { return }
+        switch action {
+        case let .foregroundKey(shortcut) where input.isNativeKeyboardShortcut(shortcut): return
+        case .volumeUp where input.isNativeVolume(up: true): return
+        case .volumeDown where input.isNativeVolume(up: false): return
+        default: break
+        }
         if action == .dictation {
             feedback = nil
             error = nil
@@ -387,6 +494,8 @@ final class RemoteModel {
         activity.removeAll(keepingCapacity: true)
     }
 
+    func reportError(_ message: String) { error = message }
+
     private func record(_ signal: String) {
         activity.insert(Activity(time: .now, text: signal), at: 0)
         if activity.count > 20 { activity.removeLast() }
@@ -397,11 +506,50 @@ final class RemoteModel {
         dictation.cancel("听写已取消，未发送。")
     }
 
+    private func startPowerPress(_ code: InputCode, origin: RemoteInputOrigin?) {
+        guard powerPress == nil else { return }
+        let started = ContinuousClock.now
+        powerPress = (code, origin, started, false)
+        powerTask = Task { [weak self, powerHoldDelay] in
+            do { try await Task.sleep(until: started.advanced(by: powerHoldDelay), clock: .continuous) }
+            catch { return }
+            self?.fireLongPowerPress()
+        }
+    }
+
+    private func fireLongPowerPress() {
+        guard powerPress?.fired == false else { return }
+        powerPress?.fired = true
+        runPowerAction("power-long")
+    }
+
+    private func finishPowerPress(_ code: InputCode, origin: RemoteInputOrigin?) {
+        guard let press = powerPress, press.code == code, press.origin == origin else { return }
+        defer { cancelPowerPress() }
+        if press.started.duration(to: .now) >= powerHoldDelay || press.fired {
+            fireLongPowerPress()
+        } else {
+            runPowerAction("power")
+        }
+    }
+
+    private func runPowerAction(_ slot: String) {
+        guard isEnabled, canReadKeys, !isDiagnosing, learning == nil, !dictation.phase.active,
+              let action = profile?.actions[slot] else { return }
+        perform(action)
+    }
+
+    private func cancelPowerPress() {
+        powerTask?.cancel()
+        powerTask = nil
+        powerPress = nil
+    }
+
     private func showHardwarePress(_ key: String, code: InputCode, origin: RemoteInputOrigin?) {
         if let down = hardwareDown, down.code == code, down.origin == origin { return }
         hardwareTask?.cancel()
         let time = ContinuousClock.now
-        let holdDelay = dictation.holdDelay
+        let holdDelay = key == "power" ? powerHoldDelay : dictation.holdDelay
         hardwareDown = (code, origin, time)
         hardwarePress = HardwarePress(key: key, phase: .down)
         hardwareTask = Task { [weak self] in
@@ -422,7 +570,8 @@ final class RemoteModel {
         let duration = down.time.duration(to: .now)
         hardwareTask?.cancel()
         hardwareDown = nil
-        hardwarePress = HardwarePress(key: press.key, phase: duration >= dictation.holdDelay ? .longPress : .shortPress)
+        let holdDelay = press.key == "power" ? powerHoldDelay : dictation.holdDelay
+        hardwarePress = HardwarePress(key: press.key, phase: duration >= holdDelay ? .longPress : .shortPress)
         hardwareTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
@@ -450,6 +599,12 @@ final class RemoteModel {
     private func perform(_ action: AgentAction) {
         guard !isRunning else { return }
         error = nil
+        if action == .mediaChooser || action == .appSwitcher {
+            cancelPowerPress()
+            if action == .mediaChooser { onShowMedia?() }
+            else { onSwitchApps?() }
+            return
+        }
         isRunning = true
         feedback = nil
         let target = profile?.target
@@ -483,10 +638,46 @@ final class RemoteModel {
 }
 
 extension InputCode {
+    // The RC003 sends its physical buttons on the keyboard page, including volume and return.
+    private static let xiaomi2ProKeys = [
+        0x66: "power", 0x3E: "voice", 0x52: "up", 0x50: "left", 0x28: "ok",
+        0x4F: "right", 0x51: "down", 0xF1: "back", 0x80: "plus", 0x4A: "home",
+        0x81: "minus", 0x65: "menu", 0x35: "tv"
+    ]
+
+    var xiaomi2ProSlot: String? {
+        keyboardUsage.flatMap { Self.xiaomi2ProKeys[$0] }
+    }
+
+    private var keyboardUsage: Int? {
+        guard collectionPage == 1, collectionUsage == 6, page == 7, value != 0 else { return nil }
+        return usage == Int(UInt32.max) ? value : usage
+    }
+
+    private func isKeyboardUsage(_ key: Int) -> Bool {
+        keyboardUsage == key
+    }
+
     var isKeyboardF5: Bool {
-        guard collectionPage == 1, collectionUsage == 6, page == 7 else { return false }
-        let f5 = 0x3E
-        return (usage == f5 && value != 0) || (usage == Int(UInt32.max) && value == f5)
+        isKeyboardUsage(0x3E)
+    }
+
+    func matchesNavigationKey(_ slot: String) -> Bool {
+        guard case let .foregroundKey(shortcut)? = AgentProfile.defaults.actions[slot] else { return false }
+        return isNativeKeyboardShortcut(shortcut)
+    }
+
+    func isNativeKeyboardShortcut(_ shortcut: KeyboardShortcut) -> Bool {
+        guard shortcut.modifiers.isEmpty else { return false }
+        let usages: [UInt16: Int] = [36: 0x28, 53: 0x29, 123: 0x50, 124: 0x4F, 125: 0x51, 126: 0x52]
+        guard let usage = usages[shortcut.keyCode] else { return false }
+        return isKeyboardUsage(usage)
+    }
+
+    func isNativeVolume(up: Bool) -> Bool {
+        let control = up ? 0xE9 : 0xEA
+        return collectionPage == 0x0C && collectionUsage == 1 && page == 0x0C
+            && ((usage == control && value != 0) || (usage == Int(UInt32.max) && value == control))
     }
 }
 
@@ -506,6 +697,13 @@ extension AgentAction {
         case .displaySleep: "关闭显示器"
         case .appleMenu: "打开苹果菜单"
         case .systemShortcut: "macOS 快捷键"
+        case let .foregroundKey(keys): keys.label
+        case .lockScreen: "锁定屏幕"
+        case .showDesktop: "显示桌面"
+        case .volumeUp: "提高音量"
+        case .volumeDown: "降低音量"
+        case .mediaChooser: "媒体应用选择器"
+        case .appSwitcher: "切换应用"
         }
     }
 

@@ -9,6 +9,8 @@ private let consumerEnter = InputCode(collectionPage: 12, collectionUsage: 1, pa
 
 @Test func chatGPTAndSystemBindingsRoundTripWithLearnedDevice() throws {
     var config = Configuration()
+    config.agents = [.chatGPT]
+    config.activeAgentID = AgentProfile.chatGPT.id
     config.selectDevice(xiaomi)
     config.updateRemote { $0.learn(enter, as: "ok") }
     let shortcut = SystemHotKey(keyCode: 120, flags: 262144)
@@ -22,6 +24,50 @@ private let consumerEnter = InputCode(collectionPage: 12, collectionUsage: 1, pa
     #expect(restored.match(device: other, input: enter) == nil)
     #expect(restored.match(device: xiaomi, input: consumerEnter) == nil)
     #expect(restored == config)
+}
+
+@Test(arguments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+func mediaGridKeepsFocusInOccupiedCells(_ count: Int) {
+    let grid = MediaGrid(count: count)
+    let sizes = [(1, 0), (1, 1), (2, 1), (3, 2), (2, 2), (3, 2), (3, 2), (3, 3), (3, 3), (3, 3)]
+    #expect(grid.columns == sizes[count].0)
+    #expect(grid.rows == sizes[count].1)
+    if count > 0 {
+        #expect(grid.move(from: 0, toward: .left) == 0)
+        #expect(grid.move(from: count - 1, toward: .down) == count - 1)
+    }
+    if count == 5 {
+        #expect(grid.move(from: 2, toward: .down) == 2)
+        #expect(grid.move(from: 1, toward: .down) == 4)
+        #expect(grid.move(from: 2, toward: .right) == 2)
+    }
+}
+
+@Test func builtInProfileRoutesVolumeDirectionsAndHomeToMacActions() {
+    let actions = Configuration().activeAgent?.actions
+    #expect(actions?["plus"] == .volumeUp)
+    #expect(actions?["minus"] == .volumeDown)
+    #expect(actions?["home"] == .appSwitcher)
+    for (key, code) in [("up", UInt16(126)), ("left", 123), ("right", 124), ("down", 125)] {
+        guard case let .foregroundKey(shortcut)? = actions?[key] else {
+            Issue.record("Missing foreground key for \(key)")
+            continue
+        }
+        #expect(shortcut.keyCode == code)
+        #expect(shortcut.modifiers.isEmpty)
+    }
+}
+
+@Test(arguments: [0, 1, 4, 9])
+func mediaSwitcherKeepsEveryAppOnOneRow(_ count: Int) {
+    let row = MediaGrid(count: count, singleRow: true)
+    #expect(row.columns == max(1, count))
+    #expect(row.rows == (count == 0 ? 0 : 1))
+    if count > 1 {
+        #expect(row.move(from: 0, toward: .right) == 1)
+        #expect(row.move(from: 0, toward: .down) == 0)
+        #expect(row.move(from: count - 1, toward: .right) == count - 1)
+    }
 }
 
 @Test func learningSameSignalMovesRatherThanDuplicatesBinding() {
