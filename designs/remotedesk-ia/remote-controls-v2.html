@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>遥控台 · 交互设计稿</title>
+<link rel="stylesheet" href="remote-controls-v2.css">
+<script defer src="media-installation-snapshot.js"></script>
+<script defer src="remote-controls-v2.js"></script>
+</head>
+<body>
+<header class="desktop">
+  <span class="preview">遥控台 <small>交互设计稿</small></span>
+  <div class="desktop-actions">
+    <button class="quiet" data-open-media>试用直播键 <kbd>TV</kbd></button>
+    <details id="tray" class="tray">
+      <summary><span class="led"></span> 遥控台 <span class="chevron">⌄</span></summary>
+      <div class="menu"><button id="tray-workspace"></button><button id="tray-model"></button></div>
+    </details>
+  </div>
+</header>
+<main>
+<div class="windows">
+  <section class="workspace" id="workspace" aria-label="配置工作台" data-screen-label="配置工作台">
+    <header class="toolbar">
+      <div class="traffic"><button aria-label="关闭工作台" id="traffic-close"></button><i></i><i></i></div>
+      <strong>配置工作台</strong>
+      <div class="tools">
+        <span class="connection"><span class="led"></span> 已连接</span>
+        <button id="response" class="glass" role="switch" aria-checked="true">响应遥控器 <span class="switch"></span></button>
+        <button id="toolbar-model" class="glass model-toggle" aria-label="隐藏遥控器模型" title="隐藏遥控器模型">▯</button>
+      </div>
+    </header>
+    <div class="panes">
+      <aside class="sidebar">
+        <div class="client"><span class="chat-icon" aria-hidden="true"></span><strong>ChatGPT/<em>Codex</em></strong></div>
+        <footer class="sidebar-footer">
+          <section class="access" id="permissions" hidden>
+            <p>请分别授权应用</p>
+            <button data-permission="输入监控"><span aria-hidden="true">!</span> 输入监控</button>
+            <button data-permission="辅助功能"><span aria-hidden="true">!</span> 辅助功能</button>
+          </section>
+          <details id="global-settings" class="global-settings">
+            <summary>系统设置</summary>
+            <div class="menu"><button id="configure-media">多媒体设置…</button></div>
+          </details>
+        </footer>
+      </aside>
+      <section class="device" aria-label="遥控器按键定位">
+        <div class="body-image center-image" id="center-device"><img src="assets/remote-2-pro.png" alt="小米蓝牙遥控器 2 Pro"></div>
+        <div class="device-name"><strong>小米蓝牙遥控器 2 Pro</strong><small>13 / 13 已录入</small></div>
+      </section>
+      <section class="mapping" aria-label="按键配置">
+        <header class="mapping-head"><strong>按键配置</strong><span id="active-label"></span></header>
+        <div class="rows" id="rows"></div>
+        <footer class="footer">
+          <p id="feedback" class="feedback" aria-live="polite"></p>
+          <div class="footer-actions">
+            <button id="learn" class="quiet">重新录入</button>
+            <div class="save-side">
+              <div class="split">
+                <button id="restore">恢复默认</button>
+                <details id="config-menu">
+                  <summary aria-label="配置操作" title="配置操作">⌄</summary>
+                  <div class="menu"><button id="show-profiles">配置列表…</button><button id="export">导出配置…</button><button id="import">导入配置…</button></div>
+                </details>
+              </div>
+              <button id="save" class="primary">保存</button>
+            </div>
+          </div>
+          <input type="file" id="import-file" accept="application/json,.json" hidden>
+        </footer>
+      </section>
+    </div>
+  </section>
+  <aside class="model" id="model" aria-label="遥控器模型" data-screen-label="遥控器模型">
+    <div class="body-image" id="live-device"><img src="assets/remote-2-pro.png" alt="小米蓝牙遥控器 2 Pro"></div>
+    <div class="model-dock">
+      <div class="model-status"><span class="led"></span><span id="model-status">已连接 · 正在响应</span></div>
+      <div class="model-actions"><button id="model-workspace">隐藏工作台</button><button id="model-close">隐藏模型</button></div>
+    </div>
+  </aside>
+  <div id="no-windows" class="empty" hidden>工作台和模型都已隐藏<br><small>从上方「遥控台」菜单重新显示</small></div>
+</div>
+<div class="lab"><span>预览状态</span><label><input type="checkbox" id="missing-permissions"> 模拟未授权</label></div>
+</main>
+<dialog id="panel" aria-labelledby="panel-title">
+  <header class="panel-head"><div><h1 id="panel-title"></h1><p id="panel-sub"></p></div><button id="panel-close" aria-label="关闭">×</button></header>
+  <div id="panel-body"></div>
+</dialog>
+<div id="toast" role="status" hidden></div>
+</body>
+</html>

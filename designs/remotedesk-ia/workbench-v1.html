@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>遥控台 · 信息架构原型</title>
+<style>
+:root{color-scheme:light;--ink:#222333;--sub:#626476;--line:#e1e2eb;--accent:#4e46cb;--tint:#eeedff;--bg:#f6f6fa;--paper:#fff;--good:#236949;--warn:#87550c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}button,select{font:inherit;color:inherit}button,select{border:1px solid var(--line);border-radius:7px;background:white;padding:6px 11px}button:not(:disabled),select{cursor:pointer}button:not(:disabled):hover{background:var(--tint)}button:disabled{opacity:.55}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button.primary{background:var(--accent);color:white;border-color:var(--accent)}button.primary:hover{background:#3f36ae}a,.link{color:var(--accent)}.link{border:0;background:transparent}.head,.foot{background:#fff;padding:12px 22px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.head{border-bottom:1px solid var(--line)}.foot{border-top:1px solid var(--line);font-size:12px;color:var(--sub)}.brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700}.mark{background:var(--accent);color:white;padding:5px 8px;border-radius:7px;font:700 12px/1.5 ui-monospace,monospace}.tag,.pill{border-radius:6px;background:#efeff4;padding:2px 7px;font-size:12px;color:var(--sub);white-space:nowrap}.pill.good{color:var(--good);background:#e9f5ef}.pill.warn{color:var(--warn);background:#fff3dd}.frame{display:grid;grid-template-columns:188px minmax(0,1fr);min-height:calc(100dvh - 110px)}aside{background:#f0f0f6;border-right:1px solid var(--line);padding:20px 13px;display:flex;flex-direction:column;gap:17px}nav{display:grid;gap:5px}nav button,.profiles button{text-align:left;border-color:transparent;background:transparent}nav button[aria-current="page"],.profiles button[aria-pressed="true"]{background:var(--tint);color:#4036aa;border-color:#dedaff;font-weight:650}.aside-meta{margin-top:auto;padding:10px 8px;border-top:1px solid var(--line)}main{padding:24px clamp(16px,4vw,46px) 30px;min-width:0}.content{max-width:1100px;margin:auto}.top{margin-bottom:18px}.eyebrow{font:650 11px/1.6 ui-monospace,monospace;letter-spacing:.12em;color:var(--accent)}h1,h2,h3,p{margin:0}h1{font-size:30px;line-height:1.22;letter-spacing:-.045em;margin:3px 0 6px}h2{font-size:19px;line-height:1.35}h3{font-size:14px}p,.muted{color:var(--sub)}small{color:var(--sub);font-size:12px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}.stack{display:grid;gap:13px}.card{background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:16px;min-width:0}.hero{padding:18px;background:#f3f1ff;border-color:#e3ddff}.hero h2{font-size:23px;margin:1px 0 3px}.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,.52fr);gap:13px;align-items:start}.scheme{grid-template-columns:minmax(155px,.36fr) minmax(0,1fr)}.profiles{display:grid;gap:4px}.profiles h3{margin-bottom:6px}.notice{border:1px solid #efdfb7;background:#fff8e9;border-radius:8px;padding:9px 11px;color:#714a0e}.list{list-style:none;padding:0;margin:0}.list li{border-top:1px solid var(--line);padding:8px 0}.list li:first-child{border-top:0}.key{display:inline-block;min-width:52px;font-weight:650}.status{display:grid;gap:8px;margin-top:9px}.status>div{display:flex;justify-content:space-between;gap:8px}.compact{font-size:12px}.keys{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin:10px 0}.keys button{padding:5px}.keys button[aria-pressed=true]{border-color:#877cf1;background:var(--tint)}.learned{color:var(--good);font-size:10px}.meta{margin-top:8px;padding:10px 0 0;border-top:1px solid var(--line)}.toast{color:var(--good);font-size:13px}.toast:empty{display:none}.dialog{position:fixed;inset:0;background:#17162955;display:grid;place-items:center;padding:18px;z-index:2}.dialog .card{width:min(100%,510px);box-shadow:0 14px 50px #1e194337}.dialog pre{overflow:auto;background:#f3f3f8;padding:10px;font-size:12px}.target{width:100%;padding:7px;font:inherit;border:1px solid var(--line);border-radius:6px}.nowrap{white-space:nowrap}@media(max-width:860px){.frame{grid-template-columns:145px minmax(0,1fr)}main{padding:19px}.scheme{grid-template-columns:145px minmax(0,1fr)}}@media(max-width:710px){.cols:not(.scheme){grid-template-columns:1fr}}@media(max-width:600px){.frame,.scheme{display:block}aside{padding:8px 12px;border-right:0;border-bottom:1px solid var(--line)}nav{grid-template-columns:repeat(3,1fr)}.aside-meta,aside>.eyebrow{display:none}main{padding:14px}.scheme>.card:first-child{margin-bottom:10px}.profiles{grid-template-columns:1fr 1fr}.profiles h3{grid-column:1/-1}.head,.foot{padding:9px 12px}}
+</style>
+</head>
+<body>
+<header class="head"><div class="brand"><span class="mark" aria-hidden="true">RD</span>遥控台 <span class="tag">交互原型</span></div><div class="row" id="global"></div></header>
+<div class="frame">
+<aside><span class="eyebrow">REMOTE DESK</span><nav aria-label="主导航" id="nav"></nav><div class="aside-meta"><small>实体遥控当前控制</small><div id="aside-active"></div></div></aside>
+<main><div class="content stack" id="screen"></div></main>
+</div>
+<footer class="foot"><div class="row"><label for="scenario">演示场景</label><select id="scenario"><option value="daily">日常使用</option><option value="setup">首次设置</option><option value="offline">设备离线</option></select></div><div class="row"><span>使用模拟数据，不读取设备或发送快捷键</span><a href="architecture.md">设计说明</a></div></footer>
+<div id="overlay"></div>
+<script>
+const keys=[['power','电源'],['voice','语音'],['up','方向上'],['left','方向左'],['ok','确定'],['right','方向右'],['down','方向下'],['back','返回'],['plus','音量加'],['home','主页'],['minus','音量减'],['menu','菜单'],['tv','直播']];
+const names={'ChatGPT':'浏览器 · ChatGPT','Codex':'Codex 桌面应用','Cursor':'Cursor 桌面应用','Claude Code · 终端':'终端'};
+const presets={
+ ChatGPT:{ok:'打开网页',menu:'切换到下一个 Agent'},
+ Codex:{home:'新建对话 · ⌘N',ok:'发送当前草稿 · ⌘↵',back:'停止生成 · Esc',menu:'切换到下一个 Agent'},
+ Cursor:{ok:'打开应用',menu:'切换到下一个 Agent'},
+ 'Claude Code · 终端':{ok:'打开应用',menu:'切换到下一个 Agent'}
+};
+const routes={home:'工作台',agents:'Agent 方案',remote:'遥控器'}, seq=Object.keys(names);
+const $=id=>document.getElementById(id);
+const btn=(label,act,cls='',disabled=false)=>'<button type="button" data-act="'+act+'" class="'+cls+'"'+(disabled?' disabled':'')+'>'+label+'</button>';
+const pill=(label,cls='')=>'<span class="pill '+cls+'">'+label+'</span>';
+const title=(n,t,d)=>'<header class="top"><div class="eyebrow">'+n+'</div><h1>'+t+'</h1><p>'+d+'</p></header>';
+const state={};let dialogFocus='';
+function reset(mode){Object.assign(state,{mode,page:'home',active:'Codex',view:'Codex',connected:mode==='daily',device:mode!=='setup',listen:mode!=='setup',post:mode==='daily',enabled:true,learned:new Set(mode==='setup'?[]:['home','ok','back']),slot:'ok',actions:structuredClone(presets),learn:false,dialog:'',feedback:'',resume:false,logs:[]});}
+reset('daily');
+const keyName=id=>keys.find(x=>x[0]===id)?.[1]||'';
+const requires=a=>a?.includes(' · ')||a==='发送快捷键'||a==='打开 Chat Bar';
+const linked=()=>state.connected&&state.listen;
+const deviceStatus=()=>!state.device?'未选设备':!state.connected?'设备离线':!state.listen?'已连接 · 未监听':'已连接 · 监听中';
+function actionStatus(id,a){if(!state.enabled)return pill('已暂停');if(!state.connected)return pill('设备不可用','warn');if(!state.listen)return pill('等待输入监控','warn');if(!state.learned.has(id))return pill('未录入按键','warn');if(requires(a)&&!state.post)return pill('缺少辅助功能','warn');return pill('可遥控','good')}
+function home(){
+ const a=state.actions[state.active],available=Object.entries(a).filter(([id,x])=>state.enabled&&linked()&&state.learned.has(id)&&(!requires(x)||state.post)).length;
+ const missing=Object.keys(a).find(id=>!state.learned.has(id));
+ const needed=Object.values(a).some(requires)&&!state.post;
+ const step=!state.connected?['连接并选择遥控器','route:remote']:!state.listen?['开启输入监控','route:remote']:!state.enabled?['恢复遥控触发','toggle']:missing?['录入「'+keyName(missing)+'」键','jump:'+missing]:needed?['查看辅助功能要求','inspect']:['查看当前方案','inspect'];
+ return title('01 / OVERVIEW','工作台','查看遥控器当前控制的 Agent，以及哪些按键可以触发。')+
+ '<section class="card hero row between"><div><small>当前启用方案</small><h2>'+state.active+'</h2><p>'+names[state.active]+' · '+available+' / '+Object.keys(a).length+' 个已配置动作可遥控</p></div><div class="row">'+btn('切换方案','switch','primary')+btn('查看方案','inspect')+'</div></section>'+
+ '<div class="cols"><section class="card"><h2>当前按键动作</h2><ul class="list meta">'+Object.entries(a).map(([id,x])=>'<li class="row between"><span><span class="key">'+keyName(id)+'</span> '+x+'</span>'+actionStatus(id,x)+'</li>').join('')+'</ul></section><div class="stack"><section class="card"><h2>遥控状态</h2><div class="status"><div>设备'+pill(deviceStatus(),linked()?'good':'warn')+'</div><div>遥控触发'+pill(state.enabled?'允许':'已暂停',state.enabled?'good':'')+'</div><div>辅助功能'+pill(state.post?'已允许':'未开启',state.post?'good':'warn')+'</div></div></section><section class="card stack"><h2>下一步</h2><div>'+btn(step[0],step[1])+'</div></section></div></div>';
+}
+function agents(){
+ const a=state.actions[state.view],live=state.view===state.active;
+ return title('02 / ACTIONS','Agent 方案','选择一个方案浏览和配置动作。启用后，实体遥控器才会切换到它。')+
+ '<div class="cols scheme"><section class="card profiles"><h3>方案列表</h3>'+seq.map(x=>'<button data-act="view:'+x+'" aria-pressed="'+(state.view===x)+'">'+x+(state.active===x?' <small>· 使用中</small>':'')+'</button>').join('')+'</section><section class="card stack"><div class="row between"><div><h2>'+state.view+'</h2><p>'+names[state.view]+'</p></div>'+(live?pill('当前启用','good'):btn('启用此方案','activate','primary'))+'</div>'+
+ '<div class="meta"><div class="row between"><h3>已配置动作</h3>'+btn('配置键位','dialog:edit')+'</div><ul class="list">'+(Object.entries(a).map(([id,x])=>'<li class="row between"><span><span class="key">'+keyName(id)+'</span> '+x+'</span><div class="row">'+(!state.learned.has(id)?btn('去录入','jump:'+id,'link'):requires(x)&&!state.post?pill('缺少辅助功能','warn'):pill('已录入','good'))+btn('编辑','edit:'+id)+btn('试运行','test:'+id)+'</div></li>').join('')||'<li>未分配动作</li>')+'</ul></div>'+
+ (Object.values(a).some(requires)&&!state.post?'<div class="notice row between"><span>发送快捷键需要「辅助功能」权限。</span>'+btn('模拟允许辅助功能','post')+'</div>':'')+'</section></div>';
+}
+function remote(){
+ const recorded=state.learned.has(state.slot), label=keyName(state.slot);
+ return title('03 / INPUT','遥控器','连接和录入实体按键。同一台遥控器录一次，即可供各方案使用。')+
+ (state.resume?'<div class="row">'+btn('返回 '+state.view+' 方案','return','link')+'</div>':'')+
+ '<div class="cols"><section class="card stack"><div class="row between"><h2>实体键录入</h2>'+pill(state.learned.size+' / 13 已录入')+'</div><div class="muted">小米 2 Pro · 实体键位</div><div class="keys">'+keys.map(([id,n])=>'<button data-act="key:'+id+'" aria-pressed="'+(state.slot===id)+'">'+n+(state.learned.has(id)?' <span class="learned" aria-label="已录入">●</span>':'')+'</button>').join('')+'</div><div class="meta stack"><div><h3>'+label+'</h3><small>'+(recorded?'已录入 · 所有方案共用':'尚未录入')+'</small></div>'+
+ (state.learn?'<div class="notice">请按一下实体遥控器上的「'+label+'」。录入期间不会触发动作。</div><div class="row">'+btn('模拟收到按键','capture','primary')+btn('取消录入','cancel')+'</div>':'<div class="row">'+btn(recorded?'重新录入':'录入按键','learn','primary',!linked()||!state.enabled)+(recorded?btn('清除录入','clear'):'')+(!linked()?'<small>连接并开启监听后即可录入</small>':!state.enabled?'<small>恢复遥控触发后即可录入</small>':'')+'</div>')+
+ '</div></section><div class="stack"><section class="card stack"><div class="row between"><h2>设备与连接</h2>'+pill(deviceStatus(),linked()?'good':'warn')+'</div><p>'+(state.device?'小米蓝牙语音遥控器 · HID 2717:32B8':'在 macOS 蓝牙设置配对，再选作输入设备。')+'</p><div class="row">'+(!state.connected?btn('模拟配对并选择设备','connect'):!state.listen?btn('模拟开启输入监控','listen','primary'):pill('输入监控已开启','good'))+'</div></section><section class="card stack"><h2>按键诊断</h2><p>查看收到的 HID 信号，打开诊断时实体按键不会触发动作。</p><div>'+btn('打开诊断','dialog:diagnose')+'</div></section></div></div>';
+}
+function modal(){
+ if(!state.dialog)return '';
+ const id=state.slot;
+ let body='';
+ if(state.dialog==='switch') body='<h2 id="dialog-title">切换当前方案</h2><p>选择后立即更改实体遥控器控制的 Agent。</p><div class="stack">'+seq.map(x=>btn(x+(x===state.active?' · 当前启用':''),'activate:'+x,'',x===state.active)).join('')+'</div>';
+ if(state.dialog==='diagnose') body='<h2 id="dialog-title">按键诊断</h2><p>诊断中 · 实体按键不会触发动作</p><pre>'+(state.logs.length?state.logs.join('\n'):'还没有按键信号')+'</pre><div>'+btn('模拟收到「确定」信号','signal','primary',!linked())+'</div>';
+ if(state.dialog==='edit'){
+ const options=[...new Set(['未分配动作','打开网页','打开应用','发送快捷键','打开 Chat Bar','切换到下一个 Agent',...Object.values(presets[state.view])])];
+ body='<h2 id="dialog-title">配置 '+state.view+' 动作</h2><label>键位 <select id="editKey">'+keys.map(([k,n])=>'<option value="'+k+'" '+(k===id?'selected':'')+'>'+n+'</option>').join('')+'</select></label><label>动作 <select id="editAction">'+options.map(a=>'<option '+((state.actions[state.view][id]||'未分配动作')===a?'selected':'')+'>'+a+'</option>').join('')+'</select></label><div>'+btn('保存动作','save','primary')+'</div>';
+ }
+ return '<div class="dialog"><section class="card stack" role="dialog" aria-modal="true" aria-labelledby="dialog-title">'+body+'<div>'+btn(state.dialog==='diagnose'?'完成':'关闭','close')+'</div></section></div>';
+}
+function render(){
+ $('global').innerHTML=pill(deviceStatus(),linked()?'good':'warn')+'<button data-act="toggle" role="switch" aria-checked="'+state.enabled+'">遥控触发 · '+(state.enabled?'开启':'暂停')+'</button>';
+ $('aside-active').textContent=state.active;
+ $('nav').innerHTML=Object.entries(routes).map(([id,n])=>'<button data-act="route:'+id+'" '+(state.page===id?'aria-current="page"':'')+'>'+n+'</button>').join('');
+ $('screen').innerHTML=({home,agents,remote}[state.page])()+'<div class="toast" role="status">'+state.feedback+'</div>';
+ $('overlay').innerHTML=modal();
+ for(const el of document.querySelectorAll('.head,.frame,.foot'))el.inert=!!state.dialog;
+}
+function go(page){state.page=page;state.learn=false;state.resume=false}
+document.addEventListener('click',e=>{
+ const b=e.target.closest('[data-act]');if(!b)return;
+ const [op,v]=b.dataset.act.split(':'); const was=state.dialog;
+ state.feedback='';
+ if(op==='route')go(v);
+ if(op==='toggle'){state.enabled=!state.enabled;state.learn=false}
+ if(op==='inspect'){state.view=state.active;go('agents')}
+ if(op==='switch')state.dialog='switch';
+ if(op==='view'){state.view=v}
+ if(op==='activate'){state.active=v||state.view;state.dialog='';state.feedback='已启用 '+state.active}
+ if(op==='jump'){if(state.page==='home')state.view=state.active;state.slot=v;go('remote');state.resume=true}
+ if(op==='return')go('agents');
+ if(op==='key'){state.slot=v;state.learn=false}
+ if(op==='connect'){state.device=true;state.connected=true}
+ if(op==='listen')state.listen=true;
+ if(op==='post')state.post=true;
+ if(op==='learn'&&linked()&&state.enabled)state.learn=true;
+ if(op==='cancel')state.learn=false;
+ if(op==='capture'){state.learned.add(state.slot);state.learn=false;state.feedback='已录入「'+keyName(state.slot)+'」，各方案均可使用'}
+ if(op==='clear'){state.learned.delete(state.slot);state.feedback='已清除实体信号，方案动作仍保留'}
+ if(op==='dialog'){state.learn=false;state.dialog=v}
+ if(op==='close')state.dialog='';
+ if(op==='signal'){state.logs.unshift('确定 · HID 示例信号');state.logs=state.logs.slice(0,8)}
+ if(op==='edit'){state.slot=v;state.dialog='edit'}
+ if(op==='test'){const a=state.actions[state.view][v];state.feedback=requires(a)&&!state.post?'试运行未执行：缺少辅助功能权限':'模拟试运行：'+a}
+ if(op==='save'){const a=$('editAction').value;if(a==='未分配动作')delete state.actions[state.view][state.slot];else state.actions[state.view][state.slot]=a;state.dialog='';state.feedback='动作已保存'}
+ if(!was&&state.dialog)dialogFocus=b.dataset.act;
+ render();
+ if(state.dialog)$('overlay').querySelector('button,select')?.focus();
+ else if(was)document.querySelector('[data-act="'+CSS.escape(dialogFocus)+'"]')?.focus();
+ else if(['route','jump','return','inspect'].includes(op)){const h=$('screen').querySelector('h1');h.tabIndex=-1;h.focus()}
+ else document.querySelector('[data-act="'+CSS.escape(b.dataset.act)+'"]')?.focus();
+});
+document.addEventListener('change',e=>{if(e.target.id==='scenario'){reset(e.target.value);render()}if(e.target.id==='editKey'){state.slot=e.target.value;render();$('editKey').focus()}});
+document.addEventListener('keydown',e=>{if(!state.dialog)return;if(e.key==='Escape'){$('overlay').querySelector('[data-act="close"]').click();return}if(e.key==='Tab'){const els=[...$('overlay').querySelectorAll('button:not(:disabled),select')];if(e.shiftKey&&document.activeElement===els[0]){e.preventDefault();els.at(-1)?.focus()}else if(!e.shiftKey&&document.activeElement===els.at(-1)){e.preventDefault();els[0]?.focus()}}});
+render();
+</script>
+</body>
+</html>

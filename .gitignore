@@ -1,4 +1,12 @@
-.build/
-.swiftpm/
-dist/
+# SwiftPM state and local release bundles
+/.build/
+/.swiftpm/
+/dist/
+
+# macOS Finder metadata and clipboard snippets
 .DS_Store
+*.textClipping
+
+# Convenience archives of the versioned icon assets
+/designs/command-bridge/RemoteDesk-Command-Bridge-Windows.zip
+/designs/command-bridge/RemoteDesk-Command-Bridge-macOS.zip
