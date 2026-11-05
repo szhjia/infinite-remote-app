@@ -182,6 +182,7 @@ final class RemoteModel {
     private func updateAmbiguity(_ devices: Set<DeviceID>) {
         ambiguousDevices = devices
         if !canReadKeys {
+            homePressOrigins.removeAll()
             cancelLearning()
             cancelDictation()
             clearHardwarePress()
@@ -196,6 +197,7 @@ final class RemoteModel {
             selectDevice(device)
         }
         if !canReadKeys {
+            homePressOrigins.removeAll()
             cancelLearning()
             cancelDictation()
             clearHardwarePress()
@@ -412,10 +414,11 @@ final class RemoteModel {
         guard config.selectedDevice == device, canReadKeys else { return }
         switch event {
         case let .pressed(input, origin):
-            receivePress(input, slot: config.match(device: device, input: input) ?? input.xiaomi2ProSlot, origin: origin)
+            receivePress(input, slot: learnedSlot(for: input, in: config.activeRemote) ?? input.xiaomi2ProSlot,
+                         origin: origin)
         case let .released(input, origin):
             if let origin { homePressOrigins.remove(origin) }
-            let slot = config.match(device: device, input: input) ?? input.xiaomi2ProSlot
+            let slot = learnedSlot(for: input, in: config.activeRemote) ?? input.xiaomi2ProSlot
             let name = slot.flatMap { id in
                 RemoteKey.xiaomi.first { $0.id == id }?.name
             }
@@ -441,14 +444,34 @@ final class RemoteModel {
         }
     }
 
+    private func learnedSlot(for input: InputCode, in remote: RemoteMap?) -> String? {
+        if input.xiaomi2ProSlot == "home" {
+            // Older configurations may have learned either report, or both in sequence.
+            return remote?.keys.last { $0.input.xiaomi2ProSlot == "home" }?.slot
+        }
+        return remote?.slot(for: input)
+    }
+
     private func receivePress(_ input: InputCode, slot knownSlot: String?, origin: RemoteInputOrigin?) {
         let visibleSlot = knownSlot.flatMap { candidate in RemoteKey.xiaomi.first { $0.id == candidate } }
         record("按下 · \(visibleSlot.map { $0.name + " · " } ?? "")\(input.label)")
 
+        // The RC003 reports one Home press through both its keyboard array and a discrete element.
+        if input.xiaomi2ProSlot == "home", let origin {
+            let wasHeld = !homePressOrigins.isEmpty
+            homePressOrigins.insert(origin)
+            guard !wasHeld else { return }
+        }
+
         if let key = learning {
             cancelLearning()
-            let priorSlot = editableRemote?.slot(for: input)
-            updateRemoteDraft { $0.learn(input, as: key) }
+            let priorSlot = learnedSlot(for: input, in: editableRemote)
+            updateRemoteDraft {
+                if input.xiaomi2ProSlot == "home" {
+                    $0.keys.removeAll { $0.input.xiaomi2ProSlot == "home" }
+                }
+                $0.learn(input, as: key)
+            }
             let name = RemoteKey.xiaomi.first { $0.id == key }?.name ?? key
             feedback = priorSlot != nil && priorSlot != key
                 ? "信号已移到「\(name)」，保存后生效。"
@@ -457,12 +480,6 @@ final class RemoteModel {
             return
         }
         guard let visibleSlot else { return }
-        // The RC003 reports Home through both its keyboard array and a discrete element.
-        if visibleSlot.id == "home", input.xiaomi2ProSlot == "home", let origin {
-            let wasHeld = !homePressOrigins.isEmpty
-            homePressOrigins.insert(origin)
-            guard !wasHeld else { return }
-        }
         showHardwarePress(visibleSlot.id, code: input, origin: origin)
         guard isEnabled, !isDiagnosing, !isRunning, !dictation.phase.active else { return }
         if onMediaKey?(visibleSlot.id, input.matchesNavigationKey(visibleSlot.id)) == true { return }

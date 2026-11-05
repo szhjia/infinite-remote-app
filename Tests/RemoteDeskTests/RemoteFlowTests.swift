@@ -440,6 +440,52 @@ func xiaomiHomeAliasesToggleAppSwitcherOncePerPhysicalPress() {
     #expect(toggles == 2)
 }
 
+@Test(arguments: [false, true]) @MainActor
+func xiaomiHomeReportsAreOnePressDuringLearningAndAfterRemapping(directFirst: Bool) throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let array = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                          usage: Int(UInt32.max), report: 1, value: 0x4A)
+    let direct = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                           usage: 0x4A, report: 1, value: 1)
+    let reports: [(InputCode, RemoteInputOrigin)] = [
+        (array, .init(endpoint: 8, cookie: 1)),
+        (direct, .init(endpoint: 8, cookie: 2))
+    ]
+    let learningOrder = directFirst ? Array(reports.reversed()) : reports
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = RemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                            runAction: { _, _ in })
+    model.refreshPermissions()
+    var switches = 0
+    var mediaOpenings = 0
+    model.onSwitchApps = { switches += 1 }
+    model.onShowMedia = { mediaOpenings += 1 }
+
+    model.selectSlot("tv")
+    model.startLearning()
+    try #require(model.learning == "tv")
+    for (code, origin) in learningOrder {
+        input.onEvent(device, .pressed(code, origin: origin))
+    }
+    #expect(switches == 0)
+    #expect(mediaOpenings == 0)
+    #expect(model.editableRemote?.input(for: "tv") == learningOrder[0].0)
+    try #require(model.saveConfigurationChanges())
+    for (code, origin) in learningOrder {
+        input.onEvent(device, .released(code, origin: origin))
+    }
+
+    // The unrecorded report can arrive first on the next physical press.
+    for (code, origin) in learningOrder.reversed() {
+        input.onEvent(device, .pressed(code, origin: origin))
+    }
+    #expect(switches == 0)
+    #expect(mediaOpenings == 1)
+}
+
 @Test @MainActor
 func mediaAndRunningAppChoosersConsumeNavigationBeforeConfiguredActions() throws {
     let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
