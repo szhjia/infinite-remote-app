@@ -134,7 +134,7 @@ func subscriptionMismatchNeverInstallsOrReplacesResources(_ mismatch: String) as
 }
 
 @Test @MainActor
-func emptyModelAndSkippableSetupHaveNoBundledRemoteAndPermissionsReflectChecks() throws {
+func emptyModelNeedsAResourceEvenWhenPermissionsAreGranted() throws {
     let directory = try temporaryLibraryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let input = LibraryInputSource()
@@ -144,20 +144,17 @@ func emptyModelAndSkippableSetupHaveNoBundledRemoteAndPermissionsReflectChecks()
     #expect(model.installedModels.isEmpty)
     #expect(model.keys.isEmpty)
     #expect(!model.hasRemote)
+    #expect(model.readiness == .noModel)
     #expect(model.profile == nil)
     #expect(!PermissionKind.inputMonitoring.granted(in: model))
     #expect(!PermissionKind.accessibility.granted(in: model))
     input.state = .idle; allowed = true; model.refreshPermissions()
     #expect(PermissionKind.inputMonitoring.granted(in: model))
     #expect(PermissionKind.accessibility.granted(in: model))
+    #expect(model.readiness == .noModel)
     input.state = .permission; allowed = false; model.refreshPermissions()
     #expect(!PermissionKind.inputMonitoring.granted(in: model))
     #expect(!PermissionKind.accessibility.granted(in: model))
-    var progress = SetupProgress()
-    for _ in 0..<20 { progress.advance() }
-    #expect(progress.isLast)
-    for _ in 0..<20 { progress.back() }
-    #expect(!progress.canGoBack)
 }
 
 @Test @MainActor
@@ -174,6 +171,76 @@ func invalidSourcesAndCorruptSettingsCannotOverwritePersistedState() throws {
     #expect(broken.storageError != nil)
     #expect(throws: (any Error).self) { try broken.addSource("https://example.com/catalog.json") }
     #expect(try Data(contentsOf: directory.appending(path: "subscriptions.json")) == original)
+}
+
+@Test @MainActor
+func missingDefaultSourceIsRestoredAndCannotBeEditedOrRemoved() throws {
+    let directory = try temporaryLibraryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = URL(string: "https://fixtures.example/custom/catalog.json")!
+    let custom = RemoteSubscription(id: ResourceLibrary.sourceID(for: url), url: url)
+    try JSONEncoder().encode([custom]).write(to: directory.appending(path: "subscriptions.json"))
+
+    let library = ResourceLibrary(directory: directory)
+    #expect(library.sources.map(\.url) == [ResourceLibrary.officialURL, url])
+    let official = try #require(library.sources.first { $0.isDefault })
+    #expect(throws: (any Error).self) { try library.removeSource(official.id) }
+    #expect(throws: (any Error).self) { try library.updateSource(official.id, url: "https://fixtures.example/new/catalog.json") }
+    try library.removeSource(custom.id)
+    #expect(ResourceLibrary(directory: directory).sources.map(\.id) == [official.id])
+}
+
+@Test @MainActor
+func editingSourcePersistsItsNewEndpointWithoutInheritingTheOldCatalog() async throws {
+    let directory = try temporaryLibraryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let library = ResourceLibrary(directory: directory, session: librarySession())
+    let oldURL = URL(string: "https://fixtures.example/edit-old/catalog.json")!
+    let newURL = URL(string: "https://fixtures.example/edit-new/catalog.json")!
+    let oldID = try library.addSource(oldURL.absoluteString)
+    let otherID = try library.addSource("https://fixtures.example/edit-other/catalog.json")
+    let catalog = try sourceCatalog(Data())
+    LibraryURLProtocol.register(oldURL, .init(status: 200, data: catalog))
+    LibraryURLProtocol.register(newURL, .init(status: 200, data: catalog))
+    await library.refresh(oldID)
+    #expect(library.sources.first(where: { $0.id == oldID })?.catalog != nil)
+
+    #expect(throws: (any Error).self) { try library.updateSource(oldID, url: ResourceLibrary.officialURL.absoluteString) }
+    #expect(try library.updateSource(oldID, url: oldURL.absoluteString) == oldID)
+    #expect(library.sources.first(where: { $0.id == oldID })?.refreshedAt != nil)
+    let newID = try library.updateSource(oldID, url: newURL.absoluteString)
+    #expect(newID != oldID)
+    #expect(library.sources.dropFirst().map(\.id) == [newID, otherID])
+    #expect(library.sources.first(where: { $0.id == newID })?.catalog == nil)
+    #expect(library.sources.first(where: { $0.id == newID })?.refreshedAt == nil)
+    await library.refresh(newID)
+    let restored = ResourceLibrary(directory: directory)
+    #expect(restored.sources.first(where: { $0.id == newID })?.catalog != nil)
+    #expect(!restored.sources.contains(where: { $0.id == oldID }))
+}
+
+@Test @MainActor
+func subscriptionNameOverrideSurvivesRefreshAndCanReturnToCatalogName() async throws {
+    let directory = try temporaryLibraryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let library = ResourceLibrary(directory: directory, session: librarySession())
+    let url = URL(string: "https://fixtures.example/rename/catalog.json")!
+    let id = try library.addSource(url.absoluteString, name: "  My Library  ")
+    LibraryURLProtocol.register(url, .init(status: 200, data: try sourceCatalog(Data())))
+    await library.refresh(id)
+    #expect(library.sources.first { $0.id == id }?.title == "My Library")
+    #expect(try library.updateSource(id, url: url.absoluteString, name: "Renamed") == id)
+    let official = try #require(library.sources.first)
+    #expect(try library.updateSource(official.id, url: official.url.absoluteString, name: "Built In") == official.id)
+
+    let restored = ResourceLibrary(directory: directory)
+    #expect(restored.sources.first?.title == "Built In")
+    #expect(restored.sources.first?.isDefault == true)
+    #expect(restored.sources.first { $0.id == id }?.title == "Renamed")
+    #expect(try restored.updateSource(id, url: url.absoluteString, name: "") == id)
+    let source = try #require(restored.sources.first { $0.id == id })
+    #expect(source.catalog != nil)
+    #expect(source.title == source.catalog?.name.resolve())
 }
 
 private func copyResourceFixture(to directory: URL, id: String = "xiaomi-2-pro", release: String = "1.0.0",

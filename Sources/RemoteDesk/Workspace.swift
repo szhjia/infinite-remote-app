@@ -20,21 +20,45 @@ struct WorkspaceBrand: View {
 struct Workspace: View {
     static let initialSize = NSSize(width: 1300, height: 720)
     static let minimumSize = NSSize(width: 1000, height: 600)
+    static let sidebarWidth: CGFloat = 200
+
+    enum Page {
+        case remote, library
+
+        var title: String {
+            switch self {
+            case .remote: L10n.tr("配置工作台")
+            case .library: L10n.tr("遥控器资源库")
+            }
+        }
+    }
 
     let model: RemoteModel
-    let mediaSettings: MediaSettings
-    let previewMedia: () -> Void
-    @State private var library: ResourceLibrary
-    @State private var page: WorkspacePage = .remote
-    @AppStorage("RemoteDesk.setupCompleted") private var setupCompleted = false
+    let library: ResourceLibrary
+    let showDiagnostics: () -> Void
+    let showSettings: (AppSettingsPane?) -> Void
+    @Binding var setupRequest: UUID?
+    @Binding var page: Page
+    @FocusState private var sidebarFocus: SidebarItem?
+    @AppStorage("RemoteDesk.setupGuideHidden") private var setupGuideHidden = false
+    @State private var showsSetupProgress = false
+    @State private var showsDeviceStage = true
 
-    private enum WorkspacePage { case remote, library, settings }
+    private enum SidebarItem: Hashable { case setup, remote(String), library }
 
-    init(model: RemoteModel, mediaSettings: MediaSettings, previewMedia: @escaping () -> Void) {
+    private var sidebarSelection: SidebarItem {
+        if page == .library { return .library }
+        return model.hasRemote ? .remote(model.remoteDefinition.id) : .setup
+    }
+
+    init(model: RemoteModel, library: ResourceLibrary, page: Binding<Page>, setupRequest: Binding<UUID?> = .constant(nil),
+         showDiagnostics: @escaping () -> Void, showSettings: @escaping (AppSettingsPane?) -> Void) {
         self.model = model
-        self.mediaSettings = mediaSettings
-        self.previewMedia = previewMedia
-        _library = State(initialValue: ResourceLibrary(directory: model.libraryDirectory))
+        self.library = library
+        _page = page
+        _setupRequest = setupRequest
+        self.showDiagnostics = showDiagnostics
+        self.showSettings = showSettings
     }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -46,20 +70,17 @@ struct Workspace: View {
     @State private var profileName = ""
     @State private var approveImportDiscard = false
     @State private var showConfigActions = false
-    @State private var previewAfterSheet = false
     @AppStorage("RemoteDesk.showDeviceGuide") private var showsDeviceGuide = true
     @State private var showsCapabilities = false
     @State private var showsCalibrationConflict = false
 
     private enum SettingsSheet: Identifiable {
-        case media, profiles, name, imported(ProfileArchive), setup, permission(PermissionKind)
+        case profiles, name, imported(ProfileArchive), permission(PermissionKind)
         var id: String {
             switch self {
-            case .media: "media"
             case .profiles: "profiles"
             case .name: "name"
             case .imported: "import"
-            case .setup: "setup"
             case let .permission(kind): "permission-" + kind.id
             }
         }
@@ -70,20 +91,13 @@ struct Workspace: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let extraWidth = max(0, geometry.size.width - Self.minimumSize.width)
             HStack(spacing: 0) {
-                sidebar.frame(width: 220)
+                sidebar.frame(width: Self.sidebarWidth)
                 Divider().ignoresSafeArea(edges: .top)
                 if page == .library {
-                    ResourceLibraryView(model: model, library: library, manageSources: { page = .settings })
-                } else if page == .settings {
-                    SubscriptionSettingsView(model: model, library: library,
-                        showSetup: { sheet = .setup }, showPermission: { sheet = .permission($0) },
-                        showMedia: { sheet = .media })
+                    ResourceLibraryView(model: model, library: library, openWorkspace: openWorkspace)
                 } else if model.hasRemote {
-                    deviceStage.frame(minWidth: 270, maxWidth: .infinity)
-                    Divider().ignoresSafeArea(edges: .top)
-                    mapping.frame(width: 504 + extraWidth * 0.20)
+                    deviceWorkspace(width: geometry.size.width - Self.sidebarWidth - 1)
                 } else {
                     emptyWorkspace
                 }
@@ -92,9 +106,12 @@ struct Workspace: View {
         .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
         .background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: .top)
         .onDisappear { model.cancelLearning() }
-        .task {
-            if !setupCompleted { sheet = .setup }
-            if !model.hasRemote { page = .library }
+        .onChange(of: setupRequest, initial: true) { _, request in
+            guard request != nil else { return }
+            setupGuideHidden = false
+            navigate(to: .remote)
+            showsSetupProgress = model.hasRemote
+            setupRequest = nil
         }
         .onChange(of: model.requestedPermission) { _, permission in
             if let permission, sheet == nil { sheet = .permission(permission) }
@@ -103,14 +120,9 @@ struct Workspace: View {
             if enabled && !model.canListen && sheet == nil { sheet = .permission(.inputMonitoring) }
         }
         .sheet(item: $sheet, onDismiss: {
-            showRequestedMediaPreview()
             if let permission = model.requestedPermission { sheet = .permission(permission) }
         }) { presentedSheet in
             switch presentedSheet {
-            case .media: MediaSettingsView(settings: mediaSettings) { previewAfterSheet = true }
-            case .setup:
-                SetupFlowView(model: model, library: library) { setupCompleted = true; sheet = nil }
-                    .onDisappear { setupCompleted = true }
             case let .permission(kind):
                 PermissionStepView(kind: kind, model: model) { model.requestedPermission = nil; sheet = nil }
                     .frame(width: 430)
@@ -123,13 +135,21 @@ struct Workspace: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
+                    Text(L10n.tr("我的遥控器"))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .accessibilityAddTraits(.isHeader)
+                    if !model.hasRemote {
+                        sidebarLink(L10n.tr("开始设置"), symbol: "appletvremote.gen4", destination: .remote)
+                    }
                     ForEach(model.installedModels, id: \.id) { definition in
+                        let item = SidebarItem.remote(definition.id)
+                        let selected = sidebarSelection == item
                         Button {
-                            model.previewModel(definition.id)
-                            page = .remote
+                            openWorkspace(definition.id)
                         } label: {
                             HStack(alignment: .center, spacing: 10) {
                                 if let logo = definition.logo {
@@ -144,50 +164,163 @@ struct Workspace: View {
                                 Spacer(minLength: 0)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                            .background(page == .remote && model.remoteDefinition.id == definition.id
+                            .background(selected
                                 ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                             .contentShape(RoundedRectangle(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
-                        .focusEffectDisabled()
                         .disabled(model.hasConfigurationChanges && model.remoteDefinition.id != definition.id)
-                        .accessibilityAddTraits(page == .remote && model.remoteDefinition.id == definition.id ? .isSelected : [])
+                        .focused($sidebarFocus, equals: item)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
                         .help(definition.manifest.name)
                     }
                 }
             }
-            Button { page = .library } label: {
-                Label(L10n.tr("遥控器资源库"), systemImage: "square.grid.2x2")
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                    .background(page == .library ? Color.accentColor.opacity(0.12) : .clear,
-                                in: RoundedRectangle(cornerRadius: 8))
-            }.buttonStyle(.plain)
-            Divider()
-            Button { page = .settings } label: {
-                Label(L10n.tr("设置"), systemImage: "gearshape")
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                    .background(page == .settings ? Color.accentColor.opacity(0.12) : .clear,
-                                in: RoundedRectangle(cornerRadius: 8))
-            }.buttonStyle(.plain)
+            VStack(spacing: 6) {
+                sidebarLink(Page.library.title, symbol: "square.grid.2x2", destination: .library)
+                Button { showSettings(nil) } label: {
+                    Label(L10n.tr("应用设置"), systemImage: "gearshape")
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(12)
         .frame(maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.45), ignoresSafeAreaEdges: .top)
     }
 
+    private func sidebarLink(_ title: String, symbol: String, destination: Page) -> some View {
+        let item: SidebarItem = destination == .library ? .library : .setup
+        let selected = sidebarSelection == item
+        return Button { navigate(to: destination) } label: {
+            Label(title, systemImage: symbol)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                .background(selected ? accent.opacity(0.12) : .clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focused($sidebarFocus, equals: item)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func navigate(to destination: Page) {
+        page = destination
+        if sidebarFocus != nil {
+            sidebarFocus = sidebarSelection
+        }
+    }
+
+    private func openWorkspace(_ id: String) {
+        if model.remoteDefinition.id != id { model.previewModel(id) }
+        if model.remoteDefinition.id == id { navigate(to: .remote) }
+    }
+
+    private var setupChecklist: some View {
+        SetupChecklist(model: model, browse: { navigate(to: .library) }, hide: {
+            setupGuideHidden = true
+            showsSetupProgress = false
+        })
+    }
+
     private var emptyWorkspace: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "appletvremote.gen4").font(.system(size: 40)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 16) {
             Text(L10n.tr("添加你的第一个遥控器")).font(.title2.bold())
             Text(L10n.tr("从资源库选择一个型号，或导入本地资源包。"))
-                .foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Button(L10n.tr("浏览资源库")) { page = .library }.buttonStyle(.borderedProminent)
-        }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .foregroundStyle(.secondary)
+            if setupGuideHidden {
+                Button(L10n.tr("浏览资源库")) { navigate(to: .library) }.buttonStyle(.borderedProminent)
+            } else {
+                setupChecklist
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func deviceWorkspace(width: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top) {
+                    Text(model.remoteDefinition.manifest.name).font(.title2.bold())
+                        .accessibilityAddTraits(.isHeader)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button(showsDeviceStage ? L10n.tr("隐藏机身图") : L10n.tr("显示机身图")) {
+                        showsDeviceStage.toggle()
+                    }
+                }
+                HStack(spacing: 10) {
+                    Label(model.connectionStatus, systemImage: model.canReadKeys ? "waveform" : "exclamationmark.circle")
+                        .font(.callout.weight(.medium))
+                    readinessAction
+                    Spacer()
+                    if showsSetupProgress || (!setupGuideHidden && !model.hasVerifiedInput) {
+                        Button(L10n.tr("设置进度…")) { showsSetupProgress.toggle() }
+                            .popover(isPresented: $showsSetupProgress) { setupChecklist.padding(12) }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            Divider()
+            HStack(spacing: 0) {
+                if showsDeviceStage {
+                    deviceStage.frame(minWidth: 0, maxWidth: .infinity)
+                    Divider()
+                }
+                mapping
+                    .frame(width: showsDeviceStage ? max(504, width * 0.55) : nil)
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var readinessAction: some View {
+        switch model.readiness {
+        case .unpaired, .ambiguous:
+            Button(L10n.tr("打开蓝牙设置")) { model.openBluetooth() }
+        case .chooseDevice:
+            devicePicker
+        case .needsInputMonitoring:
+            Button(L10n.tr("查看输入监控权限")) { sheet = .permission(.inputMonitoring) }
+                .buttonStyle(.borderedProminent)
+        case .monitorUnavailable:
+            Button(L10n.tr("重试监听")) { model.refreshPermissions() }
+        case .listening, .paused:
+            Button(L10n.tr("测试按键…"), action: showDiagnostics)
+                .buttonStyle(.borderedProminent)
+            ConfigurationResponseSwitch(model: model)
+        case .diagnosing:
+            Button(L10n.tr("查看诊断…"), action: showDiagnostics)
+        case .calibrating:
+            Button(L10n.tr("取消校准")) { model.cancelLearning() }
+        case .noModel:
+            EmptyView()
+        }
     }
 
     private var warningColor: Color {
         if colorScheme == .dark { Color(red: 1, green: 0.62, blue: 0.26) }
         else { Color(red: 0.73, green: 0.29, blue: 0) }
+    }
+
+    private var devicePicker: some View {
+        Picker(L10n.tr("选择遥控器"), selection: Binding(
+            get: { model.connectedDevice.flatMap { model.devicesForSelectedModel.contains($0) ? $0 : nil } },
+            set: { if let id = $0 { model.selectDevice(id) } }
+        )) {
+            if model.connectedDevice == nil || model.connectedDevice.map(model.ambiguousDevices.contains) == true {
+                Text(L10n.tr("选择遥控器")).tag(nil as DeviceID?)
+            }
+            ForEach(model.devicesForSelectedModel, id: \.self) { id in
+                Text([id.name, id.serial].compactMap { $0 }.joined(separator: " · ")).tag(Optional(id))
+            }
+        }
+        .labelsHidden().frame(maxWidth: 225)
     }
 
     private var deviceStage: some View {
@@ -205,46 +338,16 @@ struct Workspace: View {
             DeviceArtworkGuide(model: model, showsGuide: showsDeviceGuide)
                 .frame(maxHeight: 475)
             VStack(spacing: 6) {
-                if model.selectableDevices.count > 1 || (!model.selectableDevices.isEmpty && !model.connected) {
-                    Picker(L10n.tr("遥控器"), selection: Binding(
-                        get: { model.connectedDevice.flatMap { model.selectableDevices.contains($0) ? $0 : nil } },
-                        set: { if let id = $0 { model.selectDevice(id) } }
-                    )) {
-                        if model.connectedDevice == nil || model.connectedDevice.map(model.ambiguousDevices.contains) == true {
-                            Text(L10n.tr("选择遥控器")).tag(nil as DeviceID?)
-                        }
-                        ForEach(model.selectableDevices, id: \.self) { id in
-                            Text([id.name, id.serial].compactMap { $0 }.joined(separator: " · ")).tag(Optional(id))
-                        }
-                    }
-                    .labelsHidden().frame(maxWidth: 225)
-                } else {
-                    Text(model.remoteDefinition.manifest.name).font(.callout.weight(.semibold))
-                }
-                if !model.connected && model.installedModels.count > 1 {
-                    Picker(L10n.tr("预览型号"), selection: Binding(
-                        get: { model.remoteDefinition.id },
-                        set: { model.previewModel($0) }
-                    )) {
-                        ForEach(model.installedModels, id: \.id) { definition in
-                            Text(definition.manifest.name).tag(definition.id)
-                        }
-                    }
-                    .frame(maxWidth: 225)
-                    .disabled(model.hasConfigurationChanges)
+                if model.devicesForSelectedModel.count > 1 && model.readiness != .chooseDevice {
+                    devicePicker
                 }
                 if !model.selectedAmbiguousDevices.isEmpty {
                     Text(L10n.tr("无法区分部分同型号遥控器。请在蓝牙设置中断开其中一支。"))
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
-                } else if model.connected {
+                } else if model.canReadKeys {
                     Text(L10n.tr("按键自动识别"))
                         .font(.caption).foregroundStyle(.secondary)
-                }
-                if !model.connected || !model.selectedAmbiguousDevices.isEmpty {
-                    Button(L10n.tr("打开蓝牙设置")) { model.openBluetooth() }.buttonStyle(.link)
-                } else if case .failed = model.monitorState {
-                    Button(L10n.tr("重试监听")) { model.refreshPermissions() }.buttonStyle(.link)
                 }
             }
             if showsDeviceGuide && !model.remoteDefinition.manifest.capabilities.isEmpty {
@@ -267,19 +370,16 @@ struct Workspace: View {
 
     private var mapping: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(L10n.tr("按键配置")).font(.callout.weight(.semibold))
-                    Spacer()
                     if let profile = model.profile {
-                        Text(profile.id == AgentProfile.defaults.id ? L10n.format("%@ · 只读", String(describing: profile.name)) : profile.name)
+                        Text(profile.id == AgentProfile.defaults.id ? L10n.format("%@ · 编辑后另存", profile.name) : profile.name)
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    ConfigurationResponseSwitch(model: model)
-                }
+                Spacer(minLength: 4)
+                Button(L10n.tr("切换配置…")) { sheet = .profiles }
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 9)
@@ -395,7 +495,10 @@ struct Workspace: View {
             mappingControl(key, slot: slot, gesture: gesture)
                 .disabled(model.editableActions[key.id] == .dictation)
         } else {
-            Color.clear.frame(maxWidth: .infinity).accessibilityHidden(true)
+            Text(L10n.tr("不支持"))
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(L10n.format("%@ · %@ · 不支持", key.name, gesture))
         }
     }
 
@@ -483,31 +586,15 @@ struct Workspace: View {
             }
             Divider()
             HStack(spacing: 6) {
-                Spacer(minLength: 4)
-                HStack(spacing: 0) {
-                    Button(action: model.restoreDefaultActions) {
-                        Text(L10n.tr("恢复默认")).frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Divider().frame(height: 12)
-                    Button {
-                        showConfigActions.toggle()
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .frame(width: 18, height: 29)
-                            .contentShape(Rectangle())
-                            .accessibilityLabel(L10n.tr("配置操作"))
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showConfigActions, arrowEdge: .top) {
-                        configurationActions
-                    }
-                    .padding(.trailing, 3)
+                if model.hasConfigurationChanges {
+                    Label(L10n.tr("未保存的更改"), systemImage: "circle.fill")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .modifier(FooterGlassSurface())
-                footerButton(L10n.tr("保存"), action: saveProfile)
+                Spacer(minLength: 4)
+                Button(L10n.tr("配置操作…")) { showConfigActions.toggle() }
+                    .popover(isPresented: $showConfigActions, arrowEdge: .top) { configurationActions }
+                Button(L10n.tr(model.needsProfileName ? "另存为自定义配置…" : "保存更改"), action: saveProfile)
+                    .buttonStyle(.borderedProminent)
                     .disabled(!model.hasConfigurationChanges || model.learning != nil || model.calibrationConflict != nil)
             }
             .padding(.horizontal, 15)
@@ -516,20 +603,11 @@ struct Workspace: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func footerButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .modifier(FooterGlassSurface())
-    }
-
     private var configurationActions: some View {
         VStack(alignment: .leading, spacing: 2) {
-            WorkspacePopoverAction(L10n.tr("配置列表…")) {
+            WorkspacePopoverAction(L10n.tr("恢复默认")) {
                 showConfigActions = false
-                sheet = .profiles
+                model.restoreDefaultActions()
             }
             WorkspacePopoverAction(L10n.tr("导出配置…")) {
                 showConfigActions = false
@@ -611,12 +689,6 @@ struct Workspace: View {
         } else {
             model.saveConfigurationChanges()
         }
-    }
-
-    private func showRequestedMediaPreview() {
-        guard previewAfterSheet else { return }
-        previewAfterSheet = false
-        previewMedia()
     }
 
     private var profilesSheet: some View {
@@ -760,37 +832,6 @@ private struct WorkspacePopoverAction: View {
         .buttonStyle(.plain)
         .focusEffectDisabled()
         .onHover { hovered = $0 }
-    }
-}
-
-private struct FooterGlassSurface: ViewModifier {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func body(content: Content) -> some View {
-        let label = content.font(.callout).frame(width: 82, height: 29)
-        if #available(macOS 26.0, *) {
-            label.glassEffect(isEnabled ? .regular.interactive() : .regular, in: .capsule)
-                .opacity(isEnabled ? 1 : 0.55)
-        } else {
-            label.background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(.quaternary).allowsHitTesting(false))
-                .opacity(isEnabled ? 1 : 0.55)
-        }
-    }
-}
-
-struct ConfigurationConnectionStatus: View {
-    let model: RemoteModel
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(model.canReadKeys ? Color.green : .secondary).frame(width: 6, height: 6)
-                .accessibilityHidden(true)
-            Text(model.connectionStatus).font(.callout)
-        }
-        .foregroundStyle(.secondary)
-        .fixedSize()
-        .padding(.horizontal, 4)
     }
 }
 

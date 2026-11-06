@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>无限遥控器 · macOS 界面评审</title>
+<link rel="stylesheet" href="review.css">
+<script src="review.js" defer></script>
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <span class="eyebrow">无限遥控器 <span>／</span> macOS 界面评审</span>
+    <p class="metadata"><span>v0.0.1 · 503eed2</span><span>2026.11.06</span></p>
+  </header>
+  <section class="intro">
+    <h1>从添加型号到验证按键</h1>
+    <p>从添加型号、授权到验证第一颗按键。把当前状态、下一步和配置范围放在用户做决定的位置。</p>
+    <a href="review.md">查看逐页评审与验收标准 ↗</a>
+  </section>
+
+  <section class="demo" aria-labelledby="demo-title">
+    <div class="demo-head">
+      <div><span class="eyebrow">01 ／ 交互草案</span><h2 id="demo-title">操作路径</h2></div>
+      <div class="demo-controls">
+        <label for="scenario">演示状态</label>
+        <select id="scenario">
+          <option value="empty">首次使用</option>
+          <option value="unpaired">已添加，待配对</option>
+          <option value="blocked" selected>已连接，缺输入监控</option>
+          <option value="ready">已收到按键信号</option>
+          <option value="diagnosing">诊断进行中</option>
+        </select>
+      </div>
+    </div>
+    <div class="window">
+      <div class="titlebar">
+        <span class="traffic" aria-hidden="true"><i></i><i></i><i></i></span>
+        <img src="assets/infinite-remote.png" width="18" height="18" alt="">
+        <strong>无限遥控器</strong>
+        <span class="window-tag">界面示意</span>
+      </div>
+      <div class="window-body">
+        <nav class="sidebar" aria-label="应用页面">
+          <p>设备</p>
+          <button type="button" data-page="device" aria-current="page"><span class="nav-symbol" aria-hidden="true">◉</span> 我的遥控器</button>
+          <button type="button" data-page="library"><span class="nav-symbol" aria-hidden="true">▦</span> 遥控器资源库</button>
+          <p>应用</p>
+          <button type="button" data-page="settings"><span class="nav-symbol" aria-hidden="true">⚙</span> 设置</button>
+          <div class="sidebar-note">「设置」在实际应用中通过应用菜单和 ⌘, 打开。此处入口用于切换草案。</div>
+        </nav>
+        <div class="stage">
+          <section data-view="device">
+            <div class="page-top"><div><span class="section-label">我的遥控器</span><h3 id="device-title">小米蓝牙遥控器 2 Pro</h3></div><button class="secondary" id="add-model" data-page="library" type="button">添加型号…</button></div>
+            <div id="setup-guide" hidden>
+              <div class="inset"><p class="section-label">首次使用</p><h4>设置你的第一支遥控器</h4><p class="muted">每次打开工作台，都可以继续未完成的步骤。</p>
+                <ol class="steps">
+                  <li><span><strong>添加型号</strong><small>从资源库选择与实体遥控器一致的型号。</small></span><button class="primary" type="button" data-page="library">浏览资源库</button></li>
+                  <li><span><strong>读取按键</strong><small>添加型号后，前往蓝牙配对并开启输入监控。</small></span></li>
+                  <li><span><strong>验证信号</strong><small>按下并松开任意键，确认 Mac 已收到信号。</small></span></li>
+                </ol>
+              </div>
+            </div>
+            <div id="device-workbench">
+              <div class="status-row" aria-live="polite">
+                <span id="status-icon" class="status-icon" aria-hidden="true">!</span>
+                <span><strong id="status-title">蓝牙已连接 · 缺少输入监控</strong><small id="status-description">可以浏览或编辑映射。开启输入监控后，Mac 才能读取实体键。</small></span>
+                <button type="button" id="status-action" class="primary">查看权限</button>
+              </div>
+              <div class="workbench">
+                <div class="device-stage">
+                  <span class="section-label">实体布局</span>
+                  <div class="remote-photo">
+                    <img src="assets/xiaomi-2-pro.png" alt="小米蓝牙遥控器 2 Pro 正面">
+                    <span id="remote-selection" aria-hidden="true"></span>
+                  </div>
+                  <small>选中右侧按键可定位<br>实体信号与选中态分别标记</small>
+                </div>
+                <div class="mapping">
+                  <div class="mapping-head"><div><h4>按键配置</h4><p class="muted">默认配置 · 编辑后另存</p></div><button type="button" class="secondary" id="profiles-button">切换配置…</button></div>
+                  <div class="table-scroll">
+                    <table aria-label="按键配置节选">
+                      <thead><tr><th scope="col">按键</th><th scope="col">单击</th><th scope="col">双击</th><th scope="col">长按</th></tr></thead>
+                      <tbody>
+                        <tr><th scope="row"><button type="button" data-key="电源" aria-pressed="false">电源</button></th><td>切换显示器</td><td>无操作</td><td>锁定屏幕</td></tr>
+                        <tr><th scope="row"><button type="button" data-key="语音" aria-pressed="false">语音</button></th><td>Codex 听写</td><td class="unsupported">不支持</td><td class="unsupported">不支持</td></tr>
+                        <tr class="selected"><th scope="row"><button type="button" data-key="确认" aria-pressed="true">确认</button></th><td>Return</td><td>无操作</td><td>无操作</td></tr>
+                        <tr><th scope="row"><button type="button" data-key="返回" aria-pressed="false">返回</button></th><td>Esc</td><td>无操作</td><td>无操作</td></tr>
+                        <tr><th scope="row"><button type="button" data-key="直播" aria-pressed="false">直播</button></th><td>媒体应用选择器</td><td>无操作</td><td>无操作</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="mapping-foot"><span class="muted" id="selection" aria-live="polite">选中：确认 · 配置表节选</span><button class="secondary" type="button" id="diagnose">测试按键…</button></div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section data-view="library" hidden>
+            <div class="page-top"><div><span class="section-label">发现型号</span><h3>遥控器资源库</h3></div><button type="button" class="secondary" data-page="settings" data-pane="sources">管理订阅源…</button></div>
+            <div class="library-filter"><label class="sr-only" for="query">搜索型号或品牌</label><input id="query" type="search" placeholder="搜索型号或品牌"></div>
+            <div class="install-note" id="install-note" hidden><strong>型号已添加</strong><button class="primary" data-page="device" type="button">打开工作台</button></div>
+            <div class="catalog" id="catalog">
+              <article class="resource-card">
+                <div class="catalog-photo"><img src="assets/xiaomi-2-pro.png" alt=""></div>
+                <small>小米</small>
+                <strong>小米蓝牙遥控器 2 Pro</strong>
+                <code>0.0.1</code>
+                <p>已适配的蓝牙遥控器，可用于应用切换、媒体选择和常用 Mac 操作。</p>
+                <small class="source">无限遥控器资源库</small>
+                <div><button type="button" class="primary" id="install">添加遥控器</button> <button type="button" class="secondary" id="choose" hidden>选择</button></div>
+              </article>
+              <aside class="inset library-hint"><h4>按实际型号添加</h4><p class="muted">通过机身外观与完整型号名称确认。安装后可直接进入工作台继续配对和测试。</p><p class="fineprint">保留现有型号卡片。安装反馈和后续入口由资源库页面提供。</p></aside>
+            </div>
+            <div class="inset" id="no-results" hidden><h4>没有匹配的遥控器</h4><p class="muted">清除搜索，查看当前订阅源中的全部型号。</p><button type="button" id="clear-search" class="secondary">清除搜索</button></div>
+          </section>
+          <section data-view="settings" hidden>
+            <div class="page-top"><div><span class="section-label">应用设置</span><h3>设置</h3></div></div>
+            <div class="pane-switch" role="group" aria-label="设置分类">
+              <button class="secondary" type="button" aria-pressed="true" data-settings="permissions">权限</button>
+              <button class="secondary" type="button" aria-pressed="false" data-settings="sources">订阅源</button>
+              <button class="secondary" type="button" aria-pressed="false" data-settings="media">多媒体</button>
+            </div>
+            <div class="inset" data-settings-view="permissions">
+              <h4>权限</h4><ul class="form-rows">
+                <li><span><strong>输入监控</strong><small>读取你所选遥控器的实体按键。</small></span><span id="permission-state" class="muted">尚未授权</span></li>
+                <li><span><strong>辅助功能</strong><small>用于模拟快捷键及操作其他应用。</small></span><span class="muted">按需启用</span></li>
+              </ul>
+              <button type="button" class="secondary" data-page="device">返回设备工作台</button>
+            </div>
+            <div class="inset" data-settings-view="sources" hidden>
+              <h4>订阅源</h4><ul class="form-rows"><li><span><strong>无限遥控器资源库</strong><small>管理目录 URL、刷新状态和缓存来源。</small></span><span class="muted">默认</span></li></ul>
+              <p class="muted">移除订阅源时，已安装的遥控器仍可使用。</p>
+            </div>
+            <div class="inset" data-settings-view="media" hidden>
+              <h4>多媒体</h4><ul class="form-rows"><li><span><strong>媒体应用选择器</strong><small>选择要展示的应用，最多 9 个。</small></span><span class="muted">配置与预览</span></li></ul>
+              <p class="muted">在预览中可看到应用排列和初始焦点。预览不写入配置，也不启动媒体应用。</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <p class="caption">操作示例 · 切换演示状态，或从「首次使用」进入资源库并添加型号。草案使用示例数据。</p>
+  </section>
+
+  <section class="priorities" aria-labelledby="priority-title">
+    <span class="eyebrow">02 ／ 实施顺序</span>
+    <h2 id="priority-title">三轮改进</h2>
+    <div class="priority"><span>第一轮</span><h3>完成首次使用</h3><p>安装成功能继续配置。区分配对、监听、执行与诊断，验证收到实体按键后才标记通过。</p></div>
+    <div class="priority"><span>第二轮</span><h3>整理配置入口</h3><p>配置切换进入页头，草稿状态靠近保存。设置回到应用菜单，诊断与权限在问题发生处可达。</p></div>
+    <div class="priority"><span>第三轮</span><h3>验证桌面细节</h3><p>补齐最小窗口、英文长文案、浅色与深色、键盘焦点与读屏。再调整留白、对比和浮窗控制。</p></div>
+  </section>
+  <footer><a href="review.md">逐页评审 ↗</a><a href="xcode-codex.md">Xcode 和 Codex 使用手册 ↗</a></footer>
+</main>
+<dialog id="profiles"><h3>切换配置</h3><p>默认配置 · 当前使用</p><p class="muted">编辑映射后可另存为自定义配置。</p><form method="dialog"><button class="secondary">关闭</button></form></dialog>
+</body>
+</html>

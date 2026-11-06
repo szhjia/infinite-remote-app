@@ -19,6 +19,26 @@ struct RemoteKeyRelease: Equatable {
     let key: String
 }
 
+enum RemoteReadiness: Equatable {
+    case noModel, unpaired, chooseDevice, ambiguous, needsInputMonitoring, monitorUnavailable
+    case listening, paused, diagnosing, calibrating
+
+    var title: String {
+        switch self {
+        case .noModel: L10n.tr("尚未添加遥控器")
+        case .unpaired: L10n.tr("未连接")
+        case .chooseDevice: L10n.tr("请选择已配对的遥控器")
+        case .ambiguous: L10n.tr("已连接 · 设备无法区分")
+        case .needsInputMonitoring: L10n.tr("已连接 · 缺少输入监控")
+        case .monitorUnavailable: L10n.tr("已连接 · 监听未启动")
+        case .listening: L10n.tr("已连接 · 正在监听")
+        case .paused: L10n.tr("已暂停响应 · 仍可测试按键")
+        case .diagnosing: L10n.tr("诊断中 · 动作暂停")
+        case .calibrating: L10n.tr("校准中 · 动作暂停")
+        }
+    }
+}
+
 @MainActor @Observable
 final class RemoteModel {
     struct Activity: Identifiable {
@@ -77,6 +97,7 @@ final class RemoteModel {
     var requestedPermission: PermissionKind?
     private(set) var hardwarePress: HardwarePress?
     private(set) var lastKeyRelease: RemoteKeyRelease?
+    private var diagnosticSignal: (device: DeviceID, key: String)?
     var pressedHardwareKey: String? { hardwareDown?.key }
     var isEnabled = true {
         didSet {
@@ -288,6 +309,9 @@ final class RemoteModel {
         canListen && connected && monitorState == .listening && !(connectedDevice.map(ambiguousDevices.contains) ?? false)
     }
     var selectableDevices: [DeviceID] { devices.filter { !ambiguousDevices.contains($0) } }
+    var devicesForSelectedModel: [DeviceID] {
+        selectableDevices.filter { catalog.model(for: $0)?.id == remoteDefinition.id }
+    }
     private var defaultProfile: AgentProfile { defaultProfile(for: remoteDefinition.id) }
 
     private func defaultProfile(for modelID: String) -> AgentProfile {
@@ -323,12 +347,29 @@ final class RemoteModel {
         return draftRemotes[saved.device] ?? saved
     }
     var hasConfigurationChanges: Bool { draftActions != nil || !draftRemotes.isEmpty || calibrationConflict != nil }
-    var connectionStatus: String {
-        guard connected else { return selectedAmbiguousDevices.isEmpty ? L10n.tr("未连接") : L10n.tr("已连接 · 设备无法区分") }
-        if monitorState == .ambiguous || connectedDevice.map(ambiguousDevices.contains) == true { return L10n.tr("已连接 · 设备无法区分") }
-        guard canReadKeys else { return L10n.tr("已连接 · 未监听") }
-        if isDiagnosing { return L10n.tr("已连接 · 诊断中") }
-        return isEnabled ? L10n.tr("已连接") : L10n.tr("已连接 · 已暂停")
+    var readiness: RemoteReadiness {
+        guard hasRemote else { return .noModel }
+        if monitorState == .ambiguous || (connectedDevice.map(ambiguousDevices.contains) ?? !selectedAmbiguousDevices.isEmpty) {
+            return .ambiguous
+        }
+        guard connected else { return devicesForSelectedModel.isEmpty ? .unpaired : .chooseDevice }
+        guard canListen else { return .needsInputMonitoring }
+        guard canReadKeys else { return .monitorUnavailable }
+        if isDiagnosing { return .diagnosing }
+        if learning != nil { return .calibrating }
+        return isEnabled ? .listening : .paused
+    }
+
+    var connectionStatus: String { readiness.title }
+
+    var hasVerifiedInput: Bool {
+        guard let device = connectedDevice else { return false }
+        return config.verifiedRemoteDevices?.contains(device) == true || diagnosticSignal?.device == device
+    }
+
+    var diagnosticKeyName: String? {
+        guard canReadKeys, let signal = diagnosticSignal, signal.device == connectedDevice else { return nil }
+        return keys.first { $0.id == signal.key }?.name
     }
 
     func refreshPermissions() {
@@ -575,7 +616,10 @@ final class RemoteModel {
     }
 
     func setDiagnosing(_ active: Bool) {
-        if active {
+        if active && !isDiagnosing {
+            diagnosticSignal = nil
+            aliasedPresses.removeAll()
+            clearHardwarePress()
             cancelLearning()
             cancelDictation()
             cancelGestures()
@@ -887,6 +931,14 @@ final class RemoteModel {
         hardwareTask?.cancel()
         hardwareDown = nil
         lastKeyRelease = RemoteKeyRelease(key: down.key)
+        if isDiagnosing, let device = connectedDevice {
+            diagnosticSignal = (device, down.key)
+            if config.verifiedRemoteDevices?.contains(device) != true {
+                var updated = config
+                updated.verifiedRemoteDevices = (updated.verifiedRemoteDevices ?? []) + [device]
+                save(updated)
+            }
+        }
         let holdDelay = keys.contains { $0.id == down.key && $0.longPress == true } ? powerHoldDelay : dictation.holdDelay
         hardwarePress = HardwarePress(key: down.key, phase: duration >= holdDelay ? .longPress : .shortPress)
         scheduleHardwareClear()

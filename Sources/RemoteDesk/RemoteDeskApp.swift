@@ -15,6 +15,13 @@ struct RemoteDeskApp: App {
             Image(status.asset, bundle: .module)
                 .accessibilityLabel(status.description)
         }
+        Settings {
+            @Bindable var windows = windows
+            AppSettingsView(model: windows.model, library: windows.resourceLibrary,
+                            mediaSettings: windows.mediaSettings, pane: $windows.settingsPane,
+                            showSetup: windows.showSetup, previewMedia: windows.showMediaPreview)
+                .frame(width: 600, height: 410)
+        }
     }
 
     private var trayStatus: (asset: String, description: String) {
@@ -36,6 +43,8 @@ private struct TrayMenu: View {
     let windows: RemoteWindows
 
     var body: some View {
+        Text(model.connectionStatus)
+        Divider()
         Button(windows.isWorkspaceVisible ? L10n.tr("隐藏工作台") : L10n.tr("显示工作台")) {
             windows.setWorkspaceVisible(!windows.isWorkspaceVisible)
         }
@@ -56,6 +65,7 @@ private struct TrayMenu: View {
                 Image("BridgeDiagnostics", bundle: .module)
             }
         }
+        SettingsLink { Text(L10n.tr("设置…")) }
         Divider()
         Button(L10n.tr("退出无限遥控器")) { NSApp.terminate(nil) }
     }
@@ -64,8 +74,14 @@ private struct TrayMenu: View {
 @MainActor @Observable
 final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = RemoteModel()
-    private let mediaSettings = MediaSettings()
+    let mediaSettings = MediaSettings()
     private let mediaLauncher = MediaLauncher()
+    @ObservationIgnored lazy var resourceLibrary = ResourceLibrary(directory: model.libraryDirectory)
+    var settingsPane = AppSettingsPane.permissions
+    private var setupRequest: UUID?
+    private var workspacePage: Workspace.Page = .remote {
+        didSet { configuration?.title = workspacePage.title }
+    }
     private(set) var isWorkspaceVisible = false
     private(set) var isRemoteModelVisible = false
     private var isRemoteAlwaysOnTop = UserDefaults.standard.bool(forKey: RemoteWindows.remoteAlwaysOnTopKey) {
@@ -212,6 +228,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mediaLauncher.show(mediaSettings.selection())
     }
 
+    func showMediaPreview(_ apps: [MediaSettings.LaunchItem], didClose: @escaping () -> Void) {
+        mediaLauncher.show(apps, previewCompletion: didClose)
+    }
+
     private func layoutRemote(nextTo workspace: NSWindow, fitToScreen: Bool) {
         let panel = remoteWindow()
         var frame = workspace.frame
@@ -281,11 +301,15 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func configurationWindow() -> NSWindow {
         if let configuration { return configuration }
-        let window = titledWindow(L10n.tr("配置工作台"), size: Workspace.initialSize,
+        let window = titledWindow(workspacePage.title, size: Workspace.initialSize,
                                   extraStyle: .fullSizeContentView,
-                                  content: Workspace(model: model, mediaSettings: mediaSettings) { [weak self] in
-                                      self?.showMedia()
-                                  })
+                                  content: Workspace(model: model, library: resourceLibrary,
+                                      page: Binding(get: { [weak self] in self?.workspacePage ?? .remote },
+                                                    set: { [weak self] in self?.workspacePage = $0 }),
+                                      setupRequest: Binding(get: { [weak self] in self?.setupRequest },
+                                                            set: { [weak self] in self?.setupRequest = $0 }),
+                                      showDiagnostics: { [weak self] in self?.showDiagnostics() },
+                                      showSettings: { [weak self] in self?.showSettings($0) }))
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.titleVisibility = .hidden
@@ -299,19 +323,20 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 brand.leadingAnchor.constraint(equalTo: zoomButton.trailingAnchor, constant: 12),
                 brand.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
             ])
-            let status = NSHostingView(rootView: HStack(spacing: 8) {
-                ConfigurationConnectionStatus(model: model)
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(width: 1, height: 12)
-                    .accessibilityHidden(true)
-                RemoteModelButton(windows: self)
-            }.fixedSize())
-            status.translatesAutoresizingMaskIntoConstraints = false
-            titlebar.addSubview(status)
+            let remoteButton = NSHostingView(rootView: RemoteModelButton(windows: self).fixedSize())
+            remoteButton.translatesAutoresizingMaskIntoConstraints = false
+            titlebar.addSubview(remoteButton)
             NSLayoutConstraint.activate([
-                status.trailingAnchor.constraint(equalTo: titlebar.trailingAnchor, constant: -15),
-                status.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
+                remoteButton.trailingAnchor.constraint(equalTo: titlebar.trailingAnchor, constant: -15),
+                remoteButton.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
+            ])
+            let pageTitle = NSHostingView(rootView: WorkspaceTitle(windows: self))
+            pageTitle.translatesAutoresizingMaskIntoConstraints = false
+            titlebar.addSubview(pageTitle)
+            NSLayoutConstraint.activate([
+                pageTitle.leadingAnchor.constraint(equalTo: titlebar.leadingAnchor,
+                                                   constant: Workspace.sidebarWidth + 25),
+                pageTitle.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
             ])
         }
         window.contentMinSize = Workspace.minimumSize
@@ -321,10 +346,29 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return window
     }
 
+    func showSetup() {
+        setupRequest = UUID()
+        setWorkspaceVisible(true)
+    }
+
+    func showSettings(_ pane: AppSettingsPane? = nil) {
+        if let pane { settingsPane = pane }
+        // AppKit-hosted workbench views are outside the SwiftUI scene environment.
+        // Invoke the Settings scene's existing application menu command.
+        guard let menu = NSApp.mainMenu?.items.first?.submenu,
+              let index = menu.items.firstIndex(where: { $0.keyEquivalent == "," && $0.keyEquivalentModifierMask == .command })
+        else { return }
+        menu.performActionForItem(at: index)
+    }
+
     func showDiagnostics() {
         if diagnostics == nil {
             diagnostics = titledWindow(L10n.tr("按键诊断"), size: NSSize(width: 540, height: 450),
-                                       content: SignalDiagnostics(model: model) { [weak self] in self?.diagnostics?.close() })
+                content: SignalDiagnostics(model: model, showPermissions: { [weak self] in
+                    self?.showSettings(.permissions)
+                }, showWorkspace: { [weak self] in
+                    self?.setWorkspaceVisible(true)
+                }, close: { [weak self] in self?.diagnostics?.close() }))
         }
         model.setDiagnosing(true)
         present(diagnostics)
@@ -442,6 +486,19 @@ private final class BorderlessRemoteWindow: NSWindow {
             return true
         }
         return super.performKeyEquivalent(with: event)
+    }
+}
+
+private extension RemoteWindows {
+    struct WorkspaceTitle: View {
+        unowned let windows: RemoteWindows
+
+        var body: some View {
+            Text(windows.workspacePage.title)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+        }
     }
 }
 

@@ -182,6 +182,7 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var activeAgentIDsByModel: [String: String]?
     public var selectedDevice: DeviceID?
     public var selectedModelID: String?
+    public var verifiedRemoteDevices: [DeviceID]?
     public var remotes: [RemoteMap] = []
     public var agents: [AgentProfile] = []
 

@@ -4,6 +4,40 @@ import Testing
 @testable import RemoteDesk
 
 @Test @MainActor
+func availableMediaOrderPersistsSeparatelyFromLauncherOrder() throws {
+    let suite = "media-available-order-tests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = MediaSettings(defaults: defaults)
+    settings.save(ids: ["web.youtube", "web.netflix"], custom: [])
+
+    settings.placeAvailable("web.disneyplus", inSlot: 0)
+    #expect(settings.selectedIDs == ["web.youtube", "web.netflix"])
+    settings.placeAvailable("web.youtube", inSlot: 1)
+    settings.placeAvailable("web.disneyplus", inSlot: 3)
+
+    let restored = MediaSettings(defaults: defaults)
+    #expect(restored.availableCandidates.prefix(3).map(\.id) == ["web.youtube", "com.apple.Music", "web.disneyplus"])
+    #expect(restored.selectedIDs == ["web.netflix"])
+}
+
+@Test @MainActor
+func mediaActivationAndReorderingPersistLauncherOrder() throws {
+    let suite = "media-settings-tests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = MediaSettings(defaults: defaults)
+    settings.save(ids: [], custom: [])
+    #expect(settings.place("web.youtube", at: 0))
+    #expect(settings.place("web.netflix", at: 1))
+    #expect(settings.place("web.disneyplus", at: 1))
+    #expect(settings.place("web.youtube", at: 2))
+    let restored = MediaSettings(defaults: defaults)
+    #expect(restored.selection().map(\.id) == ["web.disneyplus", "web.netflix", "web.youtube"])
+    #expect(restored.selection().allSatisfy { $0.url.scheme == "https" })
+}
+
+@Test @MainActor
 func importedModelControlsAnnotationSidesAndCapabilityStatusWithoutIdentityChecks() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

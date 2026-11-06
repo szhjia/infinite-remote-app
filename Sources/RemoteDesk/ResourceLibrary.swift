@@ -45,15 +45,24 @@ struct RemoteSubscription: Codable, Identifiable {
     var url: URL
     var catalog: SubscriptionCatalog?
     var refreshedAt: Date?
-    var title: String { catalog?.name.resolve() ?? url.host ?? url.absoluteString }
+    var customName: String?
+    var title: String {
+        customName ?? catalog?.name.resolve()
+            ?? (isDefault ? L10n.tr("无限遥控器资源库") : url.host ?? url.absoluteString)
+    }
+    var isDefault: Bool { url == ResourceLibrary.officialURL }
 }
 
 /// Catalog identity is scoped by a locally assigned subscription ID, never by untrusted remote IDs.
 @MainActor @Observable
 final class ResourceLibrary {
     private static let maxPersistedBytes = 8 * 1024 * 1024
-    static let officialURL = URL(string: "https://raw.githubusercontent.com/szhjia/infinite-remote-hub/main/catalog.json")!
-    private(set) var sources: [RemoteSubscription] = []
+    private static let maxCustomSources = 50
+    nonisolated static let officialURL = URL(string: "https://raw.githubusercontent.com/szhjia/infinite-remote-hub/main/catalog.json")!
+    private static var defaultSource: RemoteSubscription {
+        .init(id: sourceID(for: officialURL), url: officialURL)
+    }
+    private(set) var sources: [RemoteSubscription] = [ResourceLibrary.defaultSource]
     private(set) var refreshing: Set<String> = []
     private(set) var installing: Set<String> = []
     private(set) var errors: [String: String] = [:]
@@ -70,14 +79,18 @@ final class ResourceLibrary {
             let data = try Data(contentsOf: file)
             guard data.count <= Self.maxPersistedBytes else { throw CocoaError(.fileReadCorruptFile) }
             let saved = try JSONDecoder().decode([RemoteSubscription].self, from: data)
-            guard saved.count <= 50, Set(saved.map(\.id)).count == saved.count else { throw CocoaError(.fileReadCorruptFile) }
+            let custom = saved.filter { !$0.isDefault }
+            guard custom.count <= Self.maxCustomSources, saved.count <= Self.maxCustomSources + 1,
+                  Set(saved.map(\.id)).count == saved.count, Set(saved.map(\.url)).count == saved.count
+            else { throw CocoaError(.fileReadCorruptFile) }
             for source in saved {
-                guard Self.allowed(source.url) else { throw CocoaError(.fileReadCorruptFile) }
+                guard Self.allowed(source.url), source.id == Self.sourceID(for: source.url)
+                else { throw CocoaError(.fileReadCorruptFile) }
                 try source.catalog?.validate()
             }
-            sources = saved
+            sources = [saved.first(where: \.isDefault) ?? Self.defaultSource] + custom
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            sources = [.init(id: Self.sourceID(for: Self.officialURL), url: Self.officialURL)]
+            // Keep the built-in source when there is no saved list yet.
         } catch {
             canSave = false
             storageError = L10n.tr("无法读取订阅设置，原文件已保留。")
@@ -85,27 +98,81 @@ final class ResourceLibrary {
     }
 
     @discardableResult
-    func addSource(_ input: String) throws -> String {
-        guard sources.count < 50, let url = URL(string: input.trimmingCharacters(in: .whitespacesAndNewlines)),
-              Self.allowed(url) else { throw RemotePackageError.invalid(L10n.tr("请输入 HTTPS 订阅目录地址。")) }
-        guard !sources.contains(where: { $0.url == url }) else {
-            throw RemotePackageError.invalid(L10n.tr("此订阅源已存在。"))
+    func addSource(_ input: String, name: String = "") throws -> String {
+        guard sources.count - 1 < Self.maxCustomSources else {
+            throw RemotePackageError.invalid(L10n.tr("订阅源数量已达上限。"))
         }
+        let url = try validatedSourceURL(input)
         let id = Self.sourceID(for: url)
-        let source = RemoteSubscription(id: id, url: url)
+        let source = RemoteSubscription(id: id, url: url, customName: Self.customName(name))
         try persist(sources + [source])
         sources.append(source)
         return id
     }
 
+    func updateSource(_ id: String, url input: String, name: String? = nil) throws -> String {
+        let index = try sourceIndex(id)
+        let url = try validatedSourceURL(input, excluding: id)
+        let source = sources[index]
+        var replacement = source
+        if source.url != url {
+            _ = try mutableSourceIndex(id)
+            // A new endpoint must not inherit the old endpoint's cache or installed packages.
+            replacement = RemoteSubscription(id: Self.sourceID(for: url), url: url, customName: source.customName)
+        }
+        if let name { replacement.customName = Self.customName(name) }
+        if replacement.id == id, replacement.customName == source.customName { return id }
+        var next = sources
+        next[index] = replacement
+        try persist(next)
+        sources = next
+        if replacement.id != id { clearErrors(for: id) }
+        return replacement.id
+    }
+
     func removeSource(_ id: String) throws {
+        let index = try mutableSourceIndex(id)
+        var remaining = sources
+        remaining.remove(at: index)
+        try persist(remaining)
+        sources = remaining
+        clearErrors(for: id)
+    }
+
+    private func sourceIndex(_ id: String) throws -> Int {
+        guard let index = sources.firstIndex(where: { $0.id == id }) else {
+            throw RemotePackageError.invalid(L10n.tr("找不到此订阅源。"))
+        }
+        return index
+    }
+
+    private func mutableSourceIndex(_ id: String) throws -> Int {
+        let index = try sourceIndex(id)
+        guard !sources[index].isDefault else {
+            throw RemotePackageError.invalid(L10n.tr("默认订阅源的地址不能修改，且不能移除。"))
+        }
         guard !refreshing.contains(id), !installing.contains(where: { $0.hasPrefix(id + ":") }) else {
             throw RemotePackageError.invalid(L10n.tr("请等待当前下载完成。"))
         }
-        let remaining = sources.filter { $0.id != id }
-        try persist(remaining)
-        sources = remaining
-        errors[id] = nil
+        return index
+    }
+
+    private static func customName(_ input: String) -> String? {
+        let name = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
+    private func validatedSourceURL(_ input: String, excluding id: String? = nil) throws -> URL {
+        guard let url = URL(string: input.trimmingCharacters(in: .whitespacesAndNewlines)),
+              Self.allowed(url) else { throw RemotePackageError.invalid(L10n.tr("请输入 HTTPS 订阅目录地址。")) }
+        guard !sources.contains(where: { $0.id != id && $0.url == url }) else {
+            throw RemotePackageError.invalid(L10n.tr("此订阅源已存在。"))
+        }
+        return url
+    }
+
+    private func clearErrors(for id: String) {
+        errors = errors.filter { $0.key != id && !$0.key.hasPrefix(id + ":") }
     }
 
     func refreshAll() async {

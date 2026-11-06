@@ -6,12 +6,13 @@ import SwiftUI
 
 @MainActor @Observable
 final class MediaLauncher: NSObject, NSWindowDelegate {
-    private(set) var apps: [MediaSettings.Installed] = []
+    private(set) var apps: [MediaSettings.LaunchItem] = []
     private(set) var focus = 0
     private(set) var tileWidth: CGFloat = 96
     static let tileSpacing: CGFloat = 4
     static let panelPadding: CGFloat = 12
     private var switchesRunningApps = false
+    private var previewCompletion: (() -> Void)?
     private var panel: LauncherPanel?
     private var lastNativeDismissal: (slot: String, time: ContinuousClock.Instant)?
     var onError: ((String) -> Void)?
@@ -20,7 +21,7 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
     var pageStart: Int { page * MediaGrid.limit }
     var grid: MediaGrid { MediaGrid(count: apps.count - pageStart, singleRow: !switchesRunningApps) }
     var emptyMessage: String {
-        switchesRunningApps ? L10n.tr("没有其他正在运行的应用。") : L10n.tr("请在「系统设置 → 多媒体设置」中选择应用。")
+        switchesRunningApps ? L10n.tr("没有其他正在运行的应用。") : L10n.tr("请在「设置 → 多媒体」中选择应用。")
     }
 
     func showRunningApps() {
@@ -33,7 +34,7 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
             if rhs.processIdentifier == frontmost { return false }
             return (lhs.localizedName ?? "").localizedStandardCompare(rhs.localizedName ?? "") == .orderedAscending
         }
-        let items = running.compactMap { app -> MediaSettings.Installed? in
+        let items = running.compactMap { app -> MediaSettings.LaunchItem? in
             guard let id = app.bundleIdentifier, let url = app.bundleURL, seen.insert(id).inserted else { return nil }
             let candidate = MediaSettings.Candidate(id: id, name: app.localizedName ?? url.deletingPathExtension().lastPathComponent)
             return .init(candidate: candidate, url: url, icon: app.icon ?? NSWorkspace.shared.icon(forFile: url.path))
@@ -41,15 +42,21 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
         show(items, switchingApps: true, initialFocus: items.count > 1 && running.first?.processIdentifier == frontmost ? 1 : 0)
     }
 
-    func show(_ apps: [MediaSettings.Installed], switchingApps: Bool = false, initialFocus: Int = 0) {
+    func show(_ apps: [MediaSettings.LaunchItem], switchingApps: Bool = false, initialFocus: Int = 0,
+              previewCompletion: (() -> Void)? = nil) {
+        if self.previewCompletion != nil { dismiss() }
         self.apps = apps
         switchesRunningApps = switchingApps
+        self.previewCompletion = previewCompletion
         focus = initialFocus
         lastNativeDismissal = nil
         let panel = self.panel ?? makePanel()
-        panel.title = switchingApps ? L10n.tr("切换应用") : L10n.tr("媒体应用")
+        panel.title = switchingApps ? L10n.tr("切换应用") : L10n.tr(previewCompletion == nil ? "媒体应用" : "多媒体预览")
         let mouse = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main else { return }
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main else {
+            dismiss()
+            return
+        }
         let frame = screen.visibleFrame
         let spacing = Self.tileSpacing * CGFloat(grid.columns - 1)
         let padding = 2 * Self.panelPadding
@@ -63,7 +70,12 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func dismiss() { panel?.orderOut(nil) }
+    func dismiss() {
+        let completion = previewCompletion
+        previewCompletion = nil
+        panel?.orderOut(nil)
+        completion?()
+    }
 
     func windowDidResignKey(_ notification: Notification) { dismiss() }
 
@@ -114,9 +126,19 @@ final class MediaLauncher: NSObject, NSWindowDelegate {
 
     fileprivate func open(_ index: Int) {
         guard apps.indices.contains(index) else { return }
+        if previewCompletion != nil {
+            focus = index
+            return
+        }
         let app = apps[index]
         let mustBeRunning = switchesRunningApps
         dismiss()
+        if !app.url.isFileURL {
+            if !NSWorkspace.shared.open(app.url) {
+                onError?(L10n.format("无法打开%@：%@", app.candidate.name, L10n.tr("无法打开浏览器。")))
+            }
+            return
+        }
         Task {
             let options = NSWorkspace.OpenConfiguration()
             options.activates = true
@@ -224,7 +246,7 @@ private struct LauncherGridView: View {
         .foregroundStyle(.white)
     }
 
-    private func tile(_ app: MediaSettings.Installed, index: Int) -> some View {
+    private func tile(_ app: MediaSettings.LaunchItem, index: Int) -> some View {
         let selected = launcher.focus == index
         let iconSize = min(58, max(1, launcher.tileWidth - 12))
         return Button { launcher.open(index) } label: {

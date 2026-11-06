@@ -26,6 +26,72 @@ private final class InputFixture: RemoteInputSource {
 }
 
 @Test @MainActor
+func setupSeparatesHardwareConnectionFromPermissionListeningAndPause() {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "Xiaomi Remote")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let input = InputFixture(devices: [device])
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                                   runAction: { _, _ in })
+
+    #expect(model.readiness == .unpaired)
+    model.refreshPermissions()
+    #expect(model.connected)
+    #expect(model.readiness == .needsInputMonitoring)
+    input.onMonitorState(.failed(-1))
+    #expect(model.readiness == .monitorUnavailable)
+    input.onMonitorState(.listening)
+    #expect(model.readiness == .listening)
+    model.isEnabled = false
+    #expect(model.readiness == .paused)
+    model.setDiagnosing(true)
+    #expect(model.readiness == .diagnosing)
+    model.setDiagnosing(false)
+    #expect(model.readiness == .paused)
+}
+
+@Test @MainActor
+func diagnosticVerificationRequiresAFreshPhysicalPressAndReleaseAndSurvivesReload() throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "Xiaomi Remote")
+    let enter = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                          usage: Int(UInt32.max), report: 1, value: 0x28)
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let storeURL = directory.appending(path: "configuration.json")
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    let model = fixtureRemoteModel(hid: input, storeURL: storeURL, runAction: { _, _ in
+        Issue.record("A diagnostic press must not execute an action")
+    })
+    model.refreshPermissions()
+    model.isEnabled = false
+    model.pressVirtualKey("ok")
+    #expect(!model.hasVerifiedInput)
+    input.press(device, enter)
+    model.isEnabled = true
+    model.setDiagnosing(true)
+    input.onEvent(device, .released(enter))
+    #expect(!model.hasVerifiedInput)
+    input.press(device, enter)
+    #expect(!model.hasVerifiedInput)
+    input.onEvent(device, .released(enter))
+    #expect(model.hasVerifiedInput)
+    #expect(model.diagnosticKeyName != nil)
+    #expect(!model.isRunning)
+    let saved = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: storeURL))
+    #expect(saved.verifiedRemoteDevices == [device])
+    model.setDiagnosing(false)
+    #expect(model.readiness == .listening)
+
+    let reopened = RemoteModel(hid: input, storeURL: storeURL, runAction: { _, _ in })
+    reopened.refreshPermissions()
+    #expect(reopened.hasVerifiedInput)
+    #expect(reopened.diagnosticKeyName == nil)
+    input.onDevices([])
+    #expect(!reopened.hasVerifiedInput)
+}
+
+@Test @MainActor
 func hardwareListenerChangesUpdateReadinessWithoutRefreshingPermissions() {
     let remote = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米蓝牙语音遥控器")
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)

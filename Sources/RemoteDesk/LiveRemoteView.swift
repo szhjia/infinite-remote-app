@@ -12,16 +12,34 @@ struct LiveRemoteView: View {
     let hideModel: () -> Void
     let confirmQuit: () -> Void
 
-    @State private var hovering = false
     @State private var pointerKey: String?
     @State private var release: RemoteKeyRelease?
+    @FocusState private var workspaceControlFocused: Bool
 
     var body: some View {
         DockedRemoteLayout(ratio: model.remoteDefinition.layout.bodyRatio) {
+            toolbar
             casing
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .defaultFocus($workspaceControlFocused, true)
     }
+
+    private var toolbar: some View {
+        HStack(spacing: 0) {
+            windowButton("sidebar.left", title: workspaceCommand, action: toggleWorkspace)
+                .focused($workspaceControlFocused)
+            Spacer(minLength: 0)
+            windowButton("minus", title: L10n.tr("隐藏遥控器模型"), action: hideModel)
+        }
+        .padding(.horizontal, 3)
+        .padding(.vertical, 3)
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .clipped()
+    }
+
+    private var workspaceCommand: String { L10n.tr(workspaceVisible() ? "隐藏工作台" : "显示工作台") }
 
     private var casing: some View {
         RemoteArtwork(definition: model.remoteDefinition,
@@ -40,28 +58,19 @@ struct LiveRemoteView: View {
                 RemoteKeyFeedback(layout: model.remoteDefinition.layout,
                                   pressedKey: pointerKey ?? model.pressedHardwareKey, release: release)
             }
-        .overlay(alignment: .topTrailing) {
-            if hovering {
-                HStack(spacing: 4) {
-                    windowButton("minus", title: L10n.tr("隐藏遥控器模型"), action: hideModel)
-                    windowButton("xmark", title: L10n.tr("退出无限遥控器"), action: confirmQuit)
-                }
-                .padding(4)
-            }
-        }
         .contentShape(Rectangle())
         .contextMenu {
             Text(L10n.format("无限遥控器 · %@", String(describing: model.connectionStatus)))
             Divider()
-            Button(workspaceVisible() ? L10n.tr("隐藏工作台") : L10n.tr("显示工作台"), action: toggleWorkspace)
+            Button(workspaceCommand, action: toggleWorkspace)
             Toggle(L10n.tr("窗口置顶"), isOn: $isAlwaysOnTop)
+            Divider()
+            Button(L10n.tr("退出无限遥控器"), action: confirmQuit)
         }
-        .onHover { hovering = $0 }
         .onChange(of: model.lastKeyRelease) { _, event in release = event }
         .onChange(of: model.remoteDefinition.id) { _, _ in clearFeedback() }
         .onChange(of: model.connected) { _, connected in if !connected { clearFeedback() } }
         .onDisappear {
-            hovering = false
             clearFeedback()
         }
     }
@@ -74,10 +83,9 @@ struct LiveRemoteView: View {
     private func windowButton(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 8, weight: .semibold))
-                .frame(width: 16, height: 16)
-                .background(.regularMaterial, in: Circle())
-                .contentShape(Circle())
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 24, height: 20)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
@@ -195,16 +203,25 @@ private struct ReleaseRipple: View {
 
 private struct DockedRemoteLayout: Layout {
     let ratio: CGFloat
-    private let gap: CGFloat = 8
+    private let leadingInset: CGFloat = 8
+    private let toolbarSpacing: CGFloat = 4
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         proposal.replacingUnspecifiedDimensions()
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let height = min(LiveRemoteView.preferredHeight, bounds.height, max(0, bounds.width - gap) / ratio)
-        subviews[0].place(at: CGPoint(x: bounds.minX + gap, y: bounds.minY), anchor: .topLeading,
-                          proposal: ProposedViewSize(width: height * ratio, height: height))
+        let toolbarHeight = subviews[0].sizeThatFits(.unspecified).height
+        let artworkY = bounds.minY + toolbarHeight + toolbarSpacing
+        let height = min(LiveRemoteView.preferredHeight, max(0, bounds.maxY - artworkY),
+                         max(0, bounds.width - leadingInset) / ratio)
+        let width = height * ratio
+        let x = bounds.minX + leadingInset
+
+        subviews[0].place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading,
+                          proposal: ProposedViewSize(width: width, height: toolbarHeight))
+        subviews[1].place(at: CGPoint(x: x, y: artworkY), anchor: .topLeading,
+                          proposal: ProposedViewSize(width: width, height: height))
     }
 }
 
