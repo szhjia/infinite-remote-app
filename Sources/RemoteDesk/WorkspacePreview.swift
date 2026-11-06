@@ -13,8 +13,10 @@ import SwiftUI
 private struct WorkspacePreview: View {
     @State private var page: Workspace.Page = .remote
     @State private var fixture: WorkspacePreviewFixture
+    let installModel: Bool
 
     init(installModel: Bool) {
+        self.installModel = installModel
         _fixture = State(initialValue: WorkspacePreviewFixture(installModel: installModel))
     }
 
@@ -22,11 +24,16 @@ private struct WorkspacePreview: View {
         if let error = fixture.error {
             ContentUnavailableView("Preview fixture unavailable", systemImage: "exclamationmark.triangle",
                                    description: Text(error))
-        } else {
+        } else if installModel {
             Workspace(model: fixture.model, library: fixture.library, page: $page,
                       showDiagnostics: {}, showSettings: { _ in })
                 .defaultAppStorage(fixture.defaults)
-                .frame(width: Workspace.initialSize.width, height: Workspace.initialSize.height)
+                .frame(width: Workspace.windowSize.width, height: Workspace.windowSize.height)
+        } else {
+            SetupGuide(model: fixture.model, library: fixture.library, stage: .welcome,
+                       saveStage: { _ in }, deferSetup: {}, finish: {})
+                .defaultAppStorage(fixture.defaults)
+                .frame(width: SetupGuide.windowSize.width, height: SetupGuide.windowSize.height)
         }
     }
 }

@@ -1,0 +1,58 @@
+import Foundation
+import Testing
+@testable import RemoteDesk
+
+@Test
+func firstRunStaysInSetupUntilFinishedEvenAfterInstallingAModel() throws {
+    let suite = "RemoteDesk.setup-startup-tests.\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    #expect(SetupStartup.requiresGuide(in: defaults, hasModel: false))
+    SetupStartup.begin(in: defaults)
+    let resumed = try #require(UserDefaults(suiteName: suite))
+    #expect(SetupStartup.requiresGuide(in: resumed, hasModel: true))
+    SetupStartup.finish(in: resumed)
+    #expect(!SetupStartup.requiresGuide(in: defaults, hasModel: false))
+    #expect(!SetupStartup.requiresGuide(in: defaults, hasModel: true))
+}
+
+@Test
+func upgradesKeepPriorModelAndSkipDecisions() throws {
+    let suite = "RemoteDesk.setup-upgrade-tests.\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    #expect(!SetupStartup.requiresGuide(in: defaults, hasModel: true))
+    defaults.set(true, forKey: "RemoteDesk.setupGuideHidden")
+    #expect(!SetupStartup.requiresGuide(in: defaults, hasModel: false))
+}
+
+@Test
+func deferredSetupRestoresTheLastStepWithoutMarkingItFinished() throws {
+    let suite = "RemoteDesk.setup-deferred-tests.\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    SetupStartup.begin(in: defaults)
+    #expect(SetupStartup.stage(in: defaults, hasModel: false) == .welcome)
+    SetupStartup.save(.permissions, in: defaults)
+
+    let reopened = try #require(UserDefaults(suiteName: suite))
+    #expect(SetupStartup.requiresGuide(in: reopened, hasModel: true))
+    #expect(SetupStartup.stage(in: reopened, hasModel: true) == .permissions)
+
+    SetupStartup.finish(in: reopened)
+    #expect(!SetupStartup.requiresGuide(in: reopened, hasModel: true))
+    #expect(SetupStartup.stage(in: reopened, hasModel: true) == .welcome)
+}
+
+@Test
+func unfinishedLegacyGuideWithInstalledRemoteResumesAtConnection() throws {
+    let suite = "RemoteDesk.setup-migration-tests.\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    SetupStartup.begin(in: defaults)
+    #expect(SetupStartup.stage(in: defaults, hasModel: true) == .remote)
+}

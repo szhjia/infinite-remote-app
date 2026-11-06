@@ -1027,3 +1027,78 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
     try await waitUntil { actions.count == 4 && !model.isRunning }
     #expect(actions.last == .lockScreen)
 }
+
+@Test @MainActor
+func firstRunDetectsDeviceBeforeAuthorizationAndOnlyFinishesWhenReady() {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "Xiaomi Remote")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let input = InputFixture(devices: [device])
+    var allowPost = false
+    var allowAccessibility = false
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
+                                   permissions: .init(postEvents: { allowPost }, accessibility: { allowAccessibility }),
+                                   runAction: { _, _ in })
+
+    model.refreshPermissions()
+    let beforeAuthorization = SetupReadiness(model: model)
+    #expect(beforeAuthorization.connected)
+    #expect(!beforeAuthorization.inputMonitoring)
+    #expect(!beforeAuthorization.canFinish)
+    #expect(SetupStage.ready.restored(hasModel: true, readiness: beforeAuthorization) == .permissions)
+
+    input.state = .listening
+    allowPost = true
+    model.refreshPermissions()
+    #expect(!SetupReadiness(model: model).canFinish)
+
+    allowAccessibility = true
+    input.state = .failed(-1)
+    model.refreshPermissions()
+    #expect(SetupReadiness(model: model).hasPermissions)
+    #expect(!SetupReadiness(model: model).canFinish)
+
+    input.onMonitorState(.listening)
+    #expect(!model.hasVerifiedInput)
+    #expect(SetupReadiness(model: model).canFinish)
+    #expect(SetupStage.ready.restored(hasModel: true, readiness: SetupReadiness(model: model)) == .ready)
+
+    input.onAmbiguousDevices([device])
+    #expect(!SetupReadiness(model: model).connected)
+    #expect(!SetupReadiness(model: model).canFinish)
+
+    input.onDevices([])
+    let disconnected = SetupReadiness(model: model)
+    #expect(!disconnected.connected)
+    #expect(SetupStage.permissions.restored(hasModel: true, readiness: disconnected) == .permissions)
+    #expect(SetupStage.ready.restored(hasModel: true, readiness: disconnected) == .permissions)
+    #expect(SetupStage.permissions.restored(hasModel: false, readiness: disconnected) == .remote)
+}
+
+@Test @MainActor
+func replacingTheSelectedRemoteKeepsAppAuthorization() throws {
+    let first = DeviceID(vendor: 0x2717, product: 0x32B8, name: "Xiaomi Remote", serial: "first")
+    let second = DeviceID(vendor: 0x2717, product: 0x32B8, name: "Xiaomi Remote", serial: "second")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = directory.appending(path: "configuration.json")
+    let input = InputFixture(devices: [first])
+    input.state = .listening
+    let model = fixtureRemoteModel(hid: input, storeURL: store,
+                                   permissions: .init(postEvents: { true }, accessibility: { true }, listenEvents: { true }),
+                                   runAction: { _, _ in })
+
+    model.refreshPermissions()
+    #expect(model.connectedDevice == first)
+    input.onDevices([])
+    #expect(!model.connected)
+    #expect(SetupReadiness(model: model).hasPermissions)
+
+    input.onDevices([second])
+    #expect(model.connectedDevice == second)
+    #expect(input.selectedDevice == second)
+    #expect(SetupReadiness(model: model).canFinish)
+    #expect(model.requestedPermission == nil)
+    let persisted = try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: store))
+    #expect(persisted.selectedDevice == second)
+}

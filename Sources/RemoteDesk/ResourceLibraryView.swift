@@ -466,7 +466,7 @@ private struct SubscriptionSourceEditor: View {
     }
 }
 
-private struct CatalogPreview: View {
+struct CatalogPreview: View {
     let url: URL?
     @State private var image: NSImage?
 

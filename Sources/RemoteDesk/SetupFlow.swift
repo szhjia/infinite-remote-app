@@ -1,4 +1,5 @@
 import AppKit
+import RemoteCore
 import SwiftUI
 
 enum PermissionKind: String, Identifiable {
@@ -57,37 +58,96 @@ struct PermissionStepView: View {
     }
 }
 
-struct SetupChecklist: View {
-    let model: RemoteModel
-    let browse: () -> Void
-    let hide: () -> Void
+enum SetupStage: Int, CaseIterable {
+    case welcome, remote, permissions, ready
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(L10n.tr("遥控器设置进度")).font(.headline)
-                Spacer()
-                Button(L10n.tr("稍后设置"), action: hide).buttonStyle(.link)
-            }
-            step(L10n.tr("添加型号"), done: model.hasRemote)
-            step(L10n.tr("连接并读取按键"), done: model.canReadKeys)
-            step(L10n.tr("验证实体按键"), done: model.hasVerifiedInput)
-            if !model.hasRemote {
-                Button(L10n.tr("浏览资源库"), action: browse).buttonStyle(.borderedProminent)
-                    .padding(.top, 4)
-            }
+    var title: String {
+        switch self {
+        case .welcome: L10n.tr("无限遥控器")
+        case .remote: L10n.tr("连接遥控器")
+        case .permissions: L10n.tr("允许应用读取按键和执行动作")
+        case .ready: L10n.tr("完成设置")
         }
-        .padding(16)
-        .frame(maxWidth: 420, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
     }
 
-    private func step(_ title: String, done: Bool) -> some View {
-        Label(title, systemImage: done ? "checkmark.circle.fill" : "circle")
-            .foregroundStyle(done ? .primary : .secondary)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(title)
-            .accessibilityValue(L10n.tr(done ? "已完成" : "待完成"))
+    func restored(hasModel: Bool, readiness: SetupReadiness) -> Self {
+        if self == .welcome { return .welcome }
+        guard hasModel else { return .remote }
+        // A paired remote may only report its connection after the guide is visible.
+        if self == .ready && !readiness.canFinish { return .permissions }
+        return self
+    }
+}
+
+struct SetupReadiness: Equatable {
+    let connected: Bool
+    let inputMonitoring: Bool
+    let accessibility: Bool
+    let listening: Bool
+
+    var hasPermissions: Bool { inputMonitoring && accessibility }
+    var canFinish: Bool { connected && hasPermissions && listening }
+
+    @MainActor init(model: RemoteModel) {
+        connected = model.connected && model.readiness != .ambiguous
+        inputMonitoring = PermissionKind.inputMonitoring.granted(in: model)
+        accessibility = PermissionKind.accessibility.granted(in: model)
+        listening = model.canReadKeys
+    }
+}
+
+enum SetupStartup {
+    private enum Progress: String { case inProgress, finished }
+
+    private static let progressKey = "RemoteDesk.setupProgress"
+    private static let legacySkipKey = "RemoteDesk.setupGuideHidden"
+    private static let stageKey = "RemoteDesk.setupStage"
+
+    static func requiresGuide(in defaults: UserDefaults, hasModel: Bool) -> Bool {
+        switch defaults.string(forKey: progressKey).flatMap(Progress.init(rawValue:)) {
+        case .inProgress: true
+        case .finished: false
+        case nil: !hasModel && !defaults.bool(forKey: legacySkipKey)
+        }
+    }
+
+    static func begin(in defaults: UserDefaults) {
+        defaults.set(Progress.inProgress.rawValue, forKey: progressKey)
+    }
+
+    static func stage(in defaults: UserDefaults, hasModel: Bool) -> SetupStage {
+        guard defaults.string(forKey: progressKey) == Progress.inProgress.rawValue else { return .welcome }
+        if let saved = defaults.object(forKey: stageKey) as? Int, let stage = SetupStage(rawValue: saved) { return stage }
+        // Resume old in-progress guides that already added a model.
+        return hasModel ? .remote : .welcome
+    }
+
+    static func save(_ stage: SetupStage, in defaults: UserDefaults) {
+        guard defaults.string(forKey: progressKey) == Progress.inProgress.rawValue else { return }
+        defaults.set(stage.rawValue, forKey: stageKey)
+    }
+
+    static func finish(in defaults: UserDefaults) {
+        defaults.set(Progress.finished.rawValue, forKey: progressKey)
+        defaults.removeObject(forKey: stageKey)
+    }
+}
+
+struct SetupDevicePicker: View {
+    let model: RemoteModel
+
+    var body: some View {
+        Picker(L10n.tr("选择遥控器"), selection: Binding(
+            get: { model.connectedDevice.flatMap { model.devicesForSelectedModel.contains($0) ? $0 : nil } },
+            set: { if let id = $0 { model.selectDevice(id) } }
+        )) {
+            if model.connectedDevice == nil || model.connectedDevice.map(model.ambiguousDevices.contains) == true {
+                Text(L10n.tr("选择遥控器")).tag(nil as DeviceID?)
+            }
+            ForEach(model.devicesForSelectedModel, id: \.self) { id in
+                Text([id.name, id.serial].compactMap { $0 }.joined(separator: " · ")).tag(Optional(id))
+            }
+        }
+        .labelsHidden().frame(maxWidth: 225)
     }
 }

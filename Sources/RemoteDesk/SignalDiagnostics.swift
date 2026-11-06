@@ -62,7 +62,7 @@ struct SignalDiagnostics: View {
                 case .unpaired, .ambiguous:
                     Button(L10n.tr("打开蓝牙设置")) { model.openBluetooth() }
                 case .needsInputMonitoring:
-                    Button(L10n.tr("查看输入监控权限"), action: showPermissions)
+                    Button(L10n.tr("设置权限"), action: showPermissions)
                 case .monitorUnavailable:
                     Button(L10n.tr("重试监听")) { model.refreshPermissions() }
                 default:

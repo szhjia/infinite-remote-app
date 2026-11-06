@@ -2,131 +2,115 @@ import SwiftUI
 
 struct DeviceArtworkGuide: View {
     let model: RemoteModel
-    let showsGuide: Bool
-    @State private var selectedCapability: String?
+    @Binding var selection: DeviceGuideTarget?
+    let locateKey: (String) -> Void
 
-    private let laneWidth: CGFloat = 54
+    private var selectedKey: String? {
+        if case let .key(id) = selection { id } else { nil }
+    }
+
+    private var selectedCapability: String? {
+        if case let .capability(id) = selection { id } else { nil }
+    }
 
     var body: some View {
         GeometryReader { geometry in
-            let size = geometry.size
-            let artworkSize = CGSize(width: max(1, size.width - (showsGuide ? laneWidth * 2 : 0)),
-                                     height: size.height)
             let definition = model.remoteDefinition
-            let projection = ArtworkProjection(layout: definition.layout, available: artworkSize)
-            let offset = CGPoint(x: (size.width - projection.size.width) / 2,
-                                 y: (size.height - projection.size.height) / 2)
-            ZStack(alignment: .topLeading) {
-                RemoteArtwork(definition: definition, highlight: { key in
-                    if let press = model.hardwarePress, press.key == key {
-                        return press.phase.indicatorColor.opacity(0.55)
-                    }
-                    return model.slot == key ? Color.accentColor.opacity(0.45) : .clear
-                }, help: { L10n.format("%@ · 定位", String(describing: $0.name)) }, activate: model.selectSlot, selectedKey: model.slot,
-                   selectedCapability: selectedCapability, inspectCapability: showsGuide ? { selectedCapability = $0 } : nil)
-                    .frame(width: artworkSize.width, height: artworkSize.height)
-                    .position(x: size.width / 2, y: size.height / 2)
-
-                if showsGuide {
-                    let labels = DeviceArtworkAnnotation.make(definition: definition, in: size, projection: projection, offset: offset)
-                    ForEach(labels, id: \.identity) { label in
-                        let isSelected = label.capability ? selectedCapability == label.id : model.slot == label.id
-                        let rail = label.trailing ? size.width - laneWidth : laneWidth
-                        let elbow = rail + (label.trailing ? -6 : 6)
-                        Path { path in
-                            path.move(to: CGPoint(x: rail, y: label.y))
-                            path.addLine(to: CGPoint(x: elbow, y: label.y))
-                            path.addLine(to: label.anchor)
+            let layout = DeviceGuideLayout(definition: definition, viewport: geometry.size)
+            ScrollView {
+                ZStack(alignment: .topLeading) {
+                    RemoteArtwork(definition: definition, highlight: { key in
+                        if let press = model.hardwarePress, press.key == key {
+                            return press.phase.indicatorColor.opacity(0.55)
                         }
-                        .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.43), lineWidth: isSelected ? 1.3 : 0.7)
+                        return selectedKey == key ? Color.accentColor.opacity(0.32) : .clear
+                    }, help: { L10n.format("%@ · 定位", $0.name) }, activate: { activate(.key($0)) },
+                        selectedKey: selectedKey, selectedCapability: selectedCapability,
+                        inspectCapability: { activate(.capability($0)) })
+                        .frame(width: layout.artwork.width, height: layout.artwork.height)
+                        .position(x: layout.artwork.midX, y: layout.artwork.midY)
+
+                    DeviceGuideLeaders(callouts: layout.callouts, selection: selection)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
 
-                        labelButton(label, selected: isSelected)
-                            .frame(width: laneWidth, alignment: label.trailing ? .leading : .trailing)
-                            .position(x: label.trailing ? size.width - laneWidth / 2 : laneWidth / 2, y: label.y)
+                    ForEach(layout.callouts) { callout in
+                        label(callout)
+                            .position(x: callout.label.midX, y: callout.label.midY)
                     }
                 }
+                .frame(width: layout.size.width, height: layout.size.height)
             }
-            .frame(width: size.width, height: size.height)
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .onChange(of: showsGuide) { _, _ in selectedCapability = nil }
-        .onChange(of: model.remoteDefinition.id) { _, _ in selectedCapability = nil }
     }
 
-    private func labelButton(_ label: DeviceArtworkAnnotation, selected: Bool) -> some View {
-        Button {
-            if label.capability {
-                selectedCapability = label.id
-            } else {
-                selectedCapability = nil
-                model.selectSlot(label.id)
-            }
-        } label: {
-            Text(label.name)
-                .font(.caption.weight(selected ? .semibold : .regular))
+    private func activate(_ target: DeviceGuideTarget) {
+        if selection == target {
+            selection = nil
+        } else if case let .key(id) = target {
+            locateKey(id)
+        } else {
+            selection = target
+        }
+    }
+
+    private func label(_ callout: DeviceGuideLayout.Callout) -> some View {
+        let annotation = callout.annotation
+        let selected = selection == annotation.id
+        let shape = RoundedRectangle(cornerRadius: 7)
+        return Button { activate(annotation.id) } label: {
+            Label(annotation.name, systemImage: annotation.symbol)
+                .font(.system(size: 12, weight: selected ? .semibold : .medium))
                 .lineLimit(1)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 3)
+                .padding(.horizontal, 8)
+                .frame(width: callout.label.width, height: callout.label.height, alignment: .leading)
                 .foregroundStyle(selected ? Color.accentColor : Color.primary)
-                .background {
-                    if selected { RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.12)) }
-                }
-                .contentShape(Rectangle())
+                .background(selected ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor), in: shape)
+                .overlay { shape.strokeBorder(selected ? Color.accentColor.opacity(0.27) : Color.primary.opacity(0.10)) }
+                .contentShape(shape)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
-        .help(label.name)
+        .help(annotation.name)
         .popover(isPresented: Binding(
-            get: { label.capability && selectedCapability == label.id },
-            set: { if !$0 && selectedCapability == label.id { selectedCapability = nil } }
+            get: { if case .capability = annotation.id { selected } else { false } },
+            set: { if !$0 && selection == annotation.id { selection = nil } }
         )) {
-            if let capability = model.remoteDefinition.manifest.capabilities.first(where: { $0.id == label.id }) {
+            if case let .capability(id) = annotation.id,
+               let capability = model.remoteDefinition.manifest.capabilities.first(where: { $0.id == id }) {
                 DeviceCapabilityDetails(capabilities: [capability])
             }
         }
     }
-
 }
 
-struct DeviceArtworkAnnotation {
-    let id: String
-    let name: String
-    let anchor: CGPoint
-    let trailing: Bool
-    var capability = false
-    var y: CGFloat
-    var identity: String { (capability ? "capability:" : "key:") + id }
+private struct DeviceGuideLeaders: View {
+    let callouts: [DeviceGuideLayout.Callout]
+    let selection: DeviceGuideTarget?
 
-    static func make(definition: RemoteDefinition, in size: CGSize,
-                     projection: ArtworkProjection, offset: CGPoint) -> [Self] {
-        func anchor(_ shape: Hotspot) -> CGPoint {
-            let point = projection.center(for: shape)
-            return CGPoint(x: offset.x + point.x, y: offset.y + point.y)
-        }
-        var labels = definition.layout.keys.map { key in
-            let point = anchor(key.shape)
-            let trailing = key.annotationSide.map { $0 == .trailing } ?? (point.x > size.width / 2)
-            return Self(id: key.id, name: key.name, anchor: point, trailing: trailing, y: point.y)
-        }
-        for marker in definition.layout.anchors {
-            guard let capability = definition.manifest.capabilities.first(where: { $0.id == marker.capability }) else { continue }
-            let point = anchor(marker.shape)
-            labels.append(Self(id: capability.id, name: capability.name, anchor: point,
-                                     trailing: marker.annotationSide.map { $0 == .trailing } ?? (point.x > size.width / 2),
-                                     capability: true, y: point.y))
-        }
-        return [false, true].flatMap { trailing -> [Self] in
-            var lane = labels.filter { $0.trailing == trailing }.sorted { ($0.anchor.y, $0.id) < ($1.anchor.y, $1.id) }
-            let spacing = min(22, max(0, size.height - 20) / CGFloat(max(1, lane.count - 1)))
-            var previous: CGFloat = 10 - spacing
-            for index in lane.indices {
-                let bottom = size.height - 10 - CGFloat(lane.count - index - 1) * spacing
-                lane[index].y = max(previous + spacing, min(lane[index].anchor.y, bottom))
-                previous = lane[index].y
+    var body: some View {
+        Canvas { context, _ in
+            for callout in callouts where callout.id != selection {
+                draw(callout, selected: false, in: context)
             }
-            return lane
+            if let selected = callouts.first(where: { $0.id == selection }) {
+                draw(selected, selected: true, in: context)
+            }
         }
+    }
+
+    private func draw(_ callout: DeviceGuideLayout.Callout, selected: Bool, in context: GraphicsContext) {
+        let color = selected ? Color.accentColor : Color.secondary.opacity(0.72)
+        let line = Path { path in path.addLines(callout.leader) }
+        context.stroke(line, with: .color(color),
+                       style: StrokeStyle(lineWidth: selected ? 1.4 : 0.85, lineCap: .round, lineJoin: .round))
+        let anchor = callout.annotation.anchor
+        let radius: CGFloat = selected ? 2.5 : 2
+        let dot = Path(ellipseIn: CGRect(x: anchor.x - radius, y: anchor.y - radius,
+                                         width: radius * 2, height: radius * 2))
+        context.fill(dot, with: .color(selected ? color : Color(nsColor: .controlBackgroundColor)))
+        context.stroke(dot, with: .color(color), lineWidth: 0.8)
     }
 }
 

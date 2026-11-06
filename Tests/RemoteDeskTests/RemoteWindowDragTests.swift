@@ -23,7 +23,7 @@ func draggingDockedRemoteMovesBothWindows() throws {
     }
     remote.isMovable = false
     let host = NSHostingView(rootView: LiveRemoteView(
-        model: model, workspaceVisible: { true }, toggleWorkspace: {},
+        model: model, showWorkspace: {},
         isAlwaysOnTop: .constant(false), hideModel: {}, confirmQuit: {}
     ))
     remote.contentView = host

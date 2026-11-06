@@ -18,9 +18,9 @@ struct WorkspaceBrand: View {
 }
 
 struct Workspace: View {
-    static let initialSize = NSSize(width: 1300, height: 720)
-    static let minimumSize = NSSize(width: 1000, height: 600)
+    static let windowSize = NSSize(width: 1300, height: 720)
     static let sidebarWidth: CGFloat = 200
+    private static let mappingWidth: CGFloat = 604
 
     enum Page {
         case remote, library
@@ -37,12 +37,10 @@ struct Workspace: View {
     let library: ResourceLibrary
     let showDiagnostics: () -> Void
     let showSettings: (AppSettingsPane?) -> Void
-    @Binding var setupRequest: UUID?
     @Binding var page: Page
+    @Binding private var firstKeyToConfigure: String?
     @FocusState private var sidebarFocus: SidebarItem?
-    @AppStorage("RemoteDesk.setupGuideHidden") private var setupGuideHidden = false
-    @State private var showsSetupProgress = false
-    @State private var showsDeviceStage = true
+    @FocusState private var mappingFocus: String?
 
     private enum SidebarItem: Hashable { case setup, remote(String), library }
 
@@ -51,12 +49,13 @@ struct Workspace: View {
         return model.hasRemote ? .remote(model.remoteDefinition.id) : .setup
     }
 
-    init(model: RemoteModel, library: ResourceLibrary, page: Binding<Page>, setupRequest: Binding<UUID?> = .constant(nil),
-         showDiagnostics: @escaping () -> Void, showSettings: @escaping (AppSettingsPane?) -> Void) {
+    init(model: RemoteModel, library: ResourceLibrary, page: Binding<Page>,
+         showDiagnostics: @escaping () -> Void, showSettings: @escaping (AppSettingsPane?) -> Void,
+         firstKeyToConfigure: Binding<String?> = .constant(nil)) {
         self.model = model
         self.library = library
         _page = page
-        _setupRequest = setupRequest
+        _firstKeyToConfigure = firstKeyToConfigure
         self.showDiagnostics = showDiagnostics
         self.showSettings = showSettings
     }
@@ -70,7 +69,7 @@ struct Workspace: View {
     @State private var profileName = ""
     @State private var approveImportDiscard = false
     @State private var showConfigActions = false
-    @AppStorage("RemoteDesk.showDeviceGuide") private var showsDeviceGuide = true
+    @State private var guideSelection: DeviceGuideTarget?
     @State private var showsCapabilities = false
     @State private var showsCalibrationConflict = false
 
@@ -90,29 +89,20 @@ struct Workspace: View {
     private let mappingFont = Font.system(size: 13)
 
     var body: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 0) {
-                sidebar.frame(width: Self.sidebarWidth)
-                Divider().ignoresSafeArea(edges: .top)
-                if page == .library {
-                    ResourceLibraryView(model: model, library: library, openWorkspace: openWorkspace)
-                } else if model.hasRemote {
-                    deviceWorkspace(width: geometry.size.width - Self.sidebarWidth - 1)
-                } else {
-                    emptyWorkspace
-                }
+        HStack(spacing: 0) {
+            sidebar.frame(width: Self.sidebarWidth)
+            Divider().ignoresSafeArea(edges: .top)
+            if page == .library {
+                ResourceLibraryView(model: model, library: library, openWorkspace: openWorkspace)
+            } else if model.hasRemote {
+                deviceWorkspace
+            } else {
+                emptyWorkspace
             }
         }
-        .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
         .background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: .top)
         .onDisappear { model.cancelLearning() }
-        .onChange(of: setupRequest, initial: true) { _, request in
-            guard request != nil else { return }
-            setupGuideHidden = false
-            navigate(to: .remote)
-            showsSetupProgress = model.hasRemote
-            setupRequest = nil
-        }
+        .onChange(of: model.remoteDefinition.id) { _, _ in guideSelection = nil }
         .onChange(of: model.requestedPermission) { _, permission in
             if let permission, sheet == nil { sheet = .permission(permission) }
         }
@@ -143,7 +133,7 @@ struct Workspace: View {
                         .padding(.horizontal, 10)
                         .accessibilityAddTraits(.isHeader)
                     if !model.hasRemote {
-                        sidebarLink(L10n.tr("开始设置"), symbol: "appletvremote.gen4", destination: .remote)
+                        sidebarLink(L10n.tr("添加遥控器"), symbol: "appletvremote.gen4", destination: .remote)
                     }
                     ForEach(model.installedModels, id: \.id) { definition in
                         let item = SidebarItem.remote(definition.id)
@@ -218,61 +208,39 @@ struct Workspace: View {
         if model.remoteDefinition.id == id { navigate(to: .remote) }
     }
 
-    private var setupChecklist: some View {
-        SetupChecklist(model: model, browse: { navigate(to: .library) }, hide: {
-            setupGuideHidden = true
-            showsSetupProgress = false
-        })
-    }
-
     private var emptyWorkspace: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(L10n.tr("添加你的第一个遥控器")).font(.title2.bold())
             Text(L10n.tr("从资源库选择一个型号，或导入本地资源包。"))
                 .foregroundStyle(.secondary)
-            if setupGuideHidden {
-                Button(L10n.tr("浏览资源库")) { navigate(to: .library) }.buttonStyle(.borderedProminent)
-            } else {
-                setupChecklist
-            }
+            Button(L10n.tr("浏览资源库")) { navigate(to: .library) }.buttonStyle(.borderedProminent)
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func deviceWorkspace(width: CGFloat) -> some View {
+    private var deviceWorkspace: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    Text(model.remoteDefinition.manifest.name).font(.title2.bold())
-                        .accessibilityAddTraits(.isHeader)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button(showsDeviceStage ? L10n.tr("隐藏机身图") : L10n.tr("显示机身图")) {
-                        showsDeviceStage.toggle()
-                    }
-                }
+                Text(model.remoteDefinition.manifest.name).font(.title2.bold())
+                    .accessibilityAddTraits(.isHeader)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
-                    Label(model.connectionStatus, systemImage: model.canReadKeys ? "waveform" : "exclamationmark.circle")
-                        .font(.callout.weight(.medium))
+                    if model.readiness != .needsInputMonitoring {
+                        Label(model.connectionStatus, systemImage: model.canReadKeys ? "waveform" : "exclamationmark.circle")
+                            .font(.callout.weight(.medium))
+                    }
                     readinessAction
                     Spacer()
-                    if showsSetupProgress || (!setupGuideHidden && !model.hasVerifiedInput) {
-                        Button(L10n.tr("设置进度…")) { showsSetupProgress.toggle() }
-                            .popover(isPresented: $showsSetupProgress) { setupChecklist.padding(12) }
-                    }
                 }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
             Divider()
             HStack(spacing: 0) {
-                if showsDeviceStage {
-                    deviceStage.frame(minWidth: 0, maxWidth: .infinity)
-                    Divider()
-                }
-                mapping
-                    .frame(width: showsDeviceStage ? max(504, width * 0.55) : nil)
+                deviceStage.frame(minWidth: 0, maxWidth: .infinity)
+                Divider()
+                mapping.frame(width: Self.mappingWidth)
             }
             .frame(maxHeight: .infinity)
         }
@@ -286,7 +254,7 @@ struct Workspace: View {
         case .chooseDevice:
             devicePicker
         case .needsInputMonitoring:
-            Button(L10n.tr("查看输入监控权限")) { sheet = .permission(.inputMonitoring) }
+            Button(L10n.tr("设置权限")) { showSettings(.permissions) }
                 .buttonStyle(.borderedProminent)
         case .monitorUnavailable:
             Button(L10n.tr("重试监听")) { model.refreshPermissions() }
@@ -309,33 +277,15 @@ struct Workspace: View {
     }
 
     private var devicePicker: some View {
-        Picker(L10n.tr("选择遥控器"), selection: Binding(
-            get: { model.connectedDevice.flatMap { model.devicesForSelectedModel.contains($0) ? $0 : nil } },
-            set: { if let id = $0 { model.selectDevice(id) } }
-        )) {
-            if model.connectedDevice == nil || model.connectedDevice.map(model.ambiguousDevices.contains) == true {
-                Text(L10n.tr("选择遥控器")).tag(nil as DeviceID?)
-            }
-            ForEach(model.devicesForSelectedModel, id: \.self) { id in
-                Text([id.name, id.serial].compactMap { $0 }.joined(separator: " · ")).tag(Optional(id))
-            }
-        }
-        .labelsHidden().frame(maxWidth: 225)
+        SetupDevicePicker(model: model)
     }
 
     private var deviceStage: some View {
         VStack(spacing: 12) {
-            HStack {
-                Text(L10n.tr("遥控器")).font(.callout.weight(.semibold))
-                Spacer()
-                Toggle(L10n.tr("显示设备说明"), isOn: $showsDeviceGuide)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .font(.caption)
-                    .fixedSize()
-            }
+            Text(L10n.tr("遥控器")).font(.callout.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
-            DeviceArtworkGuide(model: model, showsGuide: showsDeviceGuide)
+            DeviceArtworkGuide(model: model, selection: $guideSelection, locateKey: locateKey)
                 .frame(maxHeight: 475)
             VStack(spacing: 6) {
                 if model.devicesForSelectedModel.count > 1 && model.readiness != .chooseDevice {
@@ -350,7 +300,7 @@ struct Workspace: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if showsDeviceGuide && !model.remoteDefinition.manifest.capabilities.isEmpty {
+            if !model.remoteDefinition.manifest.capabilities.isEmpty {
                 Button(L10n.tr("硬件能力")) { showsCapabilities.toggle() }
                     .buttonStyle(.link)
                     .font(.caption)
@@ -412,7 +362,20 @@ struct Workspace: View {
                 .onChange(of: model.slot) { _, slot in
                     if let key = model.keys.first(where: { $0.id == slot }),
                        let systemPickerSlot, !key.actionSlots.contains(systemPickerSlot) { self.systemPickerSlot = nil }
-                    proxy.scrollTo(slot)
+                    if guideSelection != .key(slot) {
+                        if case .key = guideSelection { guideSelection = nil }
+                        proxy.scrollTo(slot)
+                    }
+                }
+                .onChange(of: guideSelection) { _, selection in
+                    if case let .key(key) = selection { proxy.scrollTo(key) }
+                }
+                .onChange(of: firstKeyToConfigure, initial: true) { _, key in
+                    guard let key else { return }
+                    locateKey(key)
+                    proxy.scrollTo(key)
+                    mappingFocus = key
+                    firstKeyToConfigure = nil
                 }
             }
             mappingFooter
@@ -426,7 +389,7 @@ struct Workspace: View {
         let phase = model.hardwarePress.flatMap { $0.key == key.id ? $0.phase : nil }
         return HStack(spacing: 8) {
             HStack(spacing: 4) {
-                Button { model.selectSlot(key.id) } label: {
+                Button { locateKey(key.id) } label: {
                     Label(key.name, systemImage: key.symbol)
                         .font(mappingFont.weight(selected ? .semibold : .regular))
                         .lineLimit(1)
@@ -523,7 +486,7 @@ struct Workspace: View {
                     actionItem(option, for: key, slot: slot)
                 }
                 Button {
-                    model.selectSlot(key.id)
+                    locateKey(key.id)
                     systemPickerSlot = slot
                     refreshHotKeys()
                 } label: {
@@ -545,6 +508,7 @@ struct Workspace: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
+        .focused($mappingFocus, equals: slot)
         .menuIndicator(.visible)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(L10n.format("%@%@的功能", String(describing: key.name), String(describing: gesture)))
@@ -560,9 +524,14 @@ struct Workspace: View {
     }
 
     private func choose(_ action: AgentAction?, for key: RemoteKey, slot: String) {
-        model.selectSlot(key.id)
+        locateKey(key.id)
         model.setAction(action, for: slot)
         systemPickerSlot = nil
+    }
+
+    private func locateKey(_ id: String) {
+        model.selectSlot(id)
+        guideSelection = .key(id)
     }
 
     private var mappingFooter: some View {

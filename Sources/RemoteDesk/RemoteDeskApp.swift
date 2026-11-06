@@ -8,15 +8,15 @@ struct RemoteDeskApp: App {
     @NSApplicationDelegateAdaptor(RemoteWindows.self) private var windows
 
     var body: some Scene {
+        @Bindable var windows = windows
         let status = trayStatus
-        MenuBarExtra {
+        MenuBarExtra(isInserted: $windows.isMenuBarItemInserted) {
             TrayMenu(model: windows.model, windows: windows)
         } label: {
             Image(status.asset, bundle: .module)
                 .accessibilityLabel(status.description)
         }
         Settings {
-            @Bindable var windows = windows
             AppSettingsView(model: windows.model, library: windows.resourceLibrary,
                             mediaSettings: windows.mediaSettings, pane: $windows.settingsPane,
                             showSetup: windows.showSetup, previewMedia: windows.showMediaPreview)
@@ -45,12 +45,13 @@ private struct TrayMenu: View {
     var body: some View {
         Text(model.connectionStatus)
         Divider()
-        Button(windows.isWorkspaceVisible ? L10n.tr("隐藏工作台") : L10n.tr("显示工作台")) {
-            windows.setWorkspaceVisible(!windows.isWorkspaceVisible)
+        Button(L10n.tr("打开工作台"), action: windows.showWorkspace)
+        if windows.needsInitialSetup && windows.didDeferSetup {
+            Button(L10n.tr("继续设置遥控器"), action: windows.showSetup)
         }
         Button((windows.isRemoteModelVisible && model.hasRemote) ? L10n.tr("隐藏遥控器模型") : L10n.tr("显示遥控器模型")) {
             windows.toggleRemoteModel()
-        }.disabled(!model.hasRemote)
+        }.disabled(!model.hasRemote || windows.needsInitialSetup)
         Toggle(L10n.tr("响应遥控器"), isOn: $model.isEnabled)
         Divider()
         if let dictationStatus = model.dictation.phase.message {
@@ -78,11 +79,21 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let mediaLauncher = MediaLauncher()
     @ObservationIgnored lazy var resourceLibrary = ResourceLibrary(directory: model.libraryDirectory)
     var settingsPane = AppSettingsPane.permissions
-    private var setupRequest: UUID?
+    private var setupWindow: NSWindow?
+    private var showsSetupKeyboardFocus = false
+    private var hasPresentedWorkspace = false
+    private var isMenuBarItemEnabled = true
+    var isMenuBarItemInserted: Bool {
+        get { hasPresentedWorkspace && setupWindow == nil && isMenuBarItemEnabled }
+        set { isMenuBarItemEnabled = newValue }
+    }
+    private(set) var needsInitialSetup = false
+    private(set) var didDeferSetup = false
+    private var firstKeyToConfigure: String?
     private var workspacePage: Workspace.Page = .remote {
         didSet { configuration?.title = workspacePage.title }
     }
-    private(set) var isWorkspaceVisible = false
+    private var isWorkspaceVisible = false
     private(set) var isRemoteModelVisible = false
     private var isRemoteAlwaysOnTop = UserDefaults.standard.bool(forKey: RemoteWindows.remoteAlwaysOnTopKey) {
         didSet {
@@ -91,10 +102,9 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     private var remote: NSWindow?
-    private var remoteMenuKeyMonitor: Any?
+    private var windowEventMonitor: Any?
     private var configuration: NSWindow?
     private var isTerminating = false
-    private static let workspaceVisibilityKey = "RemoteDesk.workspaceVisible"
     private static let remoteModelVisibilityKey = "RemoteDesk.remoteModelVisible"
     private static let remoteAlwaysOnTopKey = "RemoteDesk.remoteAlwaysOnTop"
     private var diagnostics: NSWindow?
@@ -116,9 +126,16 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         model.onDismissMedia = { [weak self] in self?.mediaLauncher.dismiss() }
         mediaLauncher.onError = { [weak self] message in self?.model.reportError(message) }
-        remoteMenuKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+        windowEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .keyUp, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        ) { [weak self] event in
+            guard let self else { return event }
+            if let setupWindow = self.setupWindow, event.window === setupWindow {
+                self.updateSetupKeyboardFocus(for: event)
+            }
+            guard event.type == .keyDown || event.type == .keyUp else { return event }
             guard Int(event.keyCode) == kVK_ContextualMenu,
-                  let self, let remote = self.remote, event.window === remote,
+                  let remote = self.remote, event.window === remote,
                   self.model.isEnabled, self.model.canReadKeys,
                   self.model.consumesContextMenu else { return event }
             // The package declares native Menu handling through HID. Let that path own the
@@ -127,10 +144,11 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         model.refreshPermissions()
         let defaults = UserDefaults.standard
-        defaults.register(defaults: [Self.workspaceVisibilityKey: true, Self.remoteModelVisibilityKey: true])
-        let showModel = defaults.bool(forKey: Self.remoteModelVisibilityKey)
-        if defaults.bool(forKey: Self.workspaceVisibilityKey) { setWorkspaceVisible(true) }
-        if showModel { setRemoteModelVisible(true) }
+        defaults.register(defaults: [Self.remoteModelVisibilityKey: true])
+        isRemoteModelVisible = defaults.bool(forKey: Self.remoteModelVisibilityKey)
+        needsInitialSetup = SetupStartup.requiresGuide(in: defaults, hasModel: model.hasRemote)
+        if needsInitialSetup { SetupStartup.begin(in: defaults) }
+        showWorkspace()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -146,7 +164,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let remoteMenuKeyMonitor { NSEvent.removeMonitor(remoteMenuKeyMonitor) }
+        if let windowEventMonitor { NSEvent.removeMonitor(windowEventMonitor) }
         mediaLauncher.dismiss()
     }
 
@@ -164,23 +182,21 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        setWorkspaceVisible(true)
+        showWorkspace()
         return false
     }
 
-    func setWorkspaceVisible(_ visible: Bool) {
-        guard visible else {
-            UserDefaults.standard.set(false, forKey: Self.workspaceVisibilityKey)
-            configuration?.close()
+    func showWorkspace() {
+        if setupWindow != nil || (needsInitialSetup && !didDeferSetup) {
+            showSetup()
             return
         }
         let window = configurationWindow()
         if NSApp.isHidden { NSApp.unhide(nil) }
         if window.isMiniaturized { window.deminiaturize(nil) }
-        if isRemoteModelVisible && model.hasRemote { layoutRemote(nextTo: window, fitToScreen: true) }
         present(window)
         updateWorkspaceVisibility()
-        UserDefaults.standard.set(true, forKey: Self.workspaceVisibilityKey)
+        if isWorkspaceVisible { hasPresentedWorkspace = true }
         updateRemoteAttachment()
     }
 
@@ -203,7 +219,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateRemoteAttachment() {
-        guard isRemoteModelVisible && model.hasRemote else {
+        guard !needsInitialSetup && isRemoteModelVisible && model.hasRemote else {
             if let remote {
                 remote.parent?.removeChildWindow(remote)
                 remote.orderOut(nil)
@@ -240,12 +256,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let preferredWidth = remotePanelWidth(for: height)
         var width = preferredWidth
         if let screen {
-            let minimum = workspace.minSize.width
-            width = min(preferredWidth, max(100, screen.width - minimum))
+            width = min(preferredWidth, max(100, screen.width - frame.width))
             if fitToScreen {
-                frame.size.width = min(frame.width, max(minimum, screen.width - width))
                 frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - frame.width - width))
-                if frame != workspace.frame { workspace.setFrame(frame, display: true) }
+                if frame.origin != workspace.frame.origin { workspace.setFrameOrigin(frame.origin) }
             } else {
                 width = min(width, max(100, screen.maxX - frame.maxX))
             }
@@ -267,11 +281,8 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.onDismiss = { [weak self] in self?.setRemoteModelVisible(false) }
         let hosting = NSHostingController(rootView: LiveRemoteView(
-            model: model, workspaceVisible: { [weak self] in self?.isWorkspaceVisible == true },
-            toggleWorkspace: { [weak self] in
-                guard let self else { return }
-                self.setWorkspaceVisible(!self.isWorkspaceVisible)
-            }, isAlwaysOnTop: Binding(
+            model: model, showWorkspace: { [weak self] in self?.showWorkspace() },
+            isAlwaysOnTop: Binding(
                 get: { [weak self] in self?.isRemoteAlwaysOnTop == true },
                 set: { [weak self] in self?.isRemoteAlwaysOnTop = $0 }
             ), hideModel: { [weak self] in self?.setRemoteModelVisible(false) },
@@ -301,34 +312,35 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func configurationWindow() -> NSWindow {
         if let configuration { return configuration }
-        let window = titledWindow(workspacePage.title, size: Workspace.initialSize,
-                                  extraStyle: .fullSizeContentView,
+        let window = titledWindow(workspacePage.title, size: Workspace.windowSize,
+                                  extraStyle: .fullSizeContentView, resizable: false,
                                   content: Workspace(model: model, library: resourceLibrary,
                                       page: Binding(get: { [weak self] in self?.workspacePage ?? .remote },
                                                     set: { [weak self] in self?.workspacePage = $0 }),
-                                      setupRequest: Binding(get: { [weak self] in self?.setupRequest },
-                                                            set: { [weak self] in self?.setupRequest = $0 }),
                                       showDiagnostics: { [weak self] in self?.showDiagnostics() },
-                                      showSettings: { [weak self] in self?.showSettings($0) }))
+                                      showSettings: { [weak self] in self?.showSettings($0) },
+                                      firstKeyToConfigure: Binding(
+                                          get: { [weak self] in self?.firstKeyToConfigure },
+                                          set: { [weak self] in self?.firstKeyToConfigure = $0 })))
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.titleVisibility = .hidden
-        if let zoomButton = window.standardWindowButton(.zoomButton),
-           let titlebar = zoomButton.superview {
+        if let lastWindowButton = window.standardWindowButton(.zoomButton) ?? window.standardWindowButton(.miniaturizeButton),
+           let titlebar = lastWindowButton.superview {
             let brand = NSHostingView(rootView: WorkspaceBrand())
             brand.translatesAutoresizingMaskIntoConstraints = false
             titlebar.addSubview(brand)
             // Follow the native controls rather than assuming a title-bar height.
             NSLayoutConstraint.activate([
-                brand.leadingAnchor.constraint(equalTo: zoomButton.trailingAnchor, constant: 12),
-                brand.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
+                brand.leadingAnchor.constraint(equalTo: lastWindowButton.trailingAnchor, constant: 12),
+                brand.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
             ])
             let remoteButton = NSHostingView(rootView: RemoteModelButton(windows: self).fixedSize())
             remoteButton.translatesAutoresizingMaskIntoConstraints = false
             titlebar.addSubview(remoteButton)
             NSLayoutConstraint.activate([
                 remoteButton.trailingAnchor.constraint(equalTo: titlebar.trailingAnchor, constant: -15),
-                remoteButton.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
+                remoteButton.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
             ])
             let pageTitle = NSHostingView(rootView: WorkspaceTitle(windows: self))
             pageTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -336,19 +348,65 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLayoutConstraint.activate([
                 pageTitle.leadingAnchor.constraint(equalTo: titlebar.leadingAnchor,
                                                    constant: Workspace.sidebarWidth + 25),
-                pageTitle.centerYAnchor.constraint(equalTo: zoomButton.centerYAnchor)
+                pageTitle.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
             ])
         }
-        window.contentMinSize = Workspace.minimumSize
-        // Use the native zoom button so the paired windows can stay side by side.
         window.collectionBehavior.insert(.fullScreenNone)
         configuration = window
         return window
     }
 
     func showSetup() {
-        setupRequest = UUID()
-        setWorkspaceVisible(true)
+        if setupWindow == nil {
+            showsSetupKeyboardFocus = false
+            let window = titledWindow(L10n.tr("遥控器使用引导"), size: SetupGuide.windowSize,
+                                      resizable: false, content: SetupGuide(
+                                          model: model, library: resourceLibrary,
+                                          stage: SetupStartup.stage(in: .standard, hasModel: model.hasRemote),
+                                          showsKeyboardFocus: { [weak self] in self?.showsSetupKeyboardFocus ?? false },
+                                          saveStage: { SetupStartup.save($0, in: .standard) },
+                                          deferSetup: { [weak self] in self?.deferSetup() },
+                                          finish: { [weak self] in self?.finishSetup() }))
+            window.collectionBehavior.insert(.fullScreenNone)
+            setupWindow = window
+        }
+        if NSApp.isHidden { NSApp.unhide(nil) }
+        if setupWindow?.isMiniaturized == true { setupWindow?.deminiaturize(nil) }
+        present(setupWindow)
+    }
+
+    private func updateSetupKeyboardFocus(for event: NSEvent) {
+        switch event.type {
+        case .keyDown:
+            let shortcutModifiers: NSEvent.ModifierFlags = [.command, .control, .option]
+            if !showsSetupKeyboardFocus && Int(event.keyCode) == kVK_Tab
+                && event.modifierFlags.intersection(shortcutModifiers).isEmpty {
+                showsSetupKeyboardFocus = true
+            }
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel:
+            if showsSetupKeyboardFocus { showsSetupKeyboardFocus = false }
+        default:
+            break
+        }
+    }
+
+    private func deferSetup() {
+        setupWindow?.close()
+        didDeferSetup = needsInitialSetup
+        showWorkspace()
+    }
+
+    private func finishSetup() {
+        guard SetupReadiness(model: model).canFinish,
+              let key = model.keys.first(where: { $0.id == model.slot }) ?? model.keys.first else { return }
+        SetupStartup.finish(in: .standard)
+        needsInitialSetup = false
+        didDeferSetup = false
+        setupWindow?.close()
+        workspacePage = .remote
+        model.selectSlot(key.id)
+        firstKeyToConfigure = key.id
+        showWorkspace()
     }
 
     func showSettings(_ pane: AppSettingsPane? = nil) {
@@ -367,21 +425,17 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 content: SignalDiagnostics(model: model, showPermissions: { [weak self] in
                     self?.showSettings(.permissions)
                 }, showWorkspace: { [weak self] in
-                    self?.setWorkspaceVisible(true)
+                    self?.showWorkspace()
                 }, close: { [weak self] in self?.diagnostics?.close() }))
         }
         model.setDiagnosing(true)
         present(diagnostics)
     }
 
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if sender === configuration, !isTerminating {
-            UserDefaults.standard.set(false, forKey: Self.workspaceVisibilityKey)
-        }
-        return true
-    }
-
     func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === setupWindow {
+            setupWindow = nil
+        }
         if notification.object as? NSWindow === diagnostics {
             model.setDiagnosing(false)
             diagnostics = nil
@@ -405,30 +459,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateRemoteAttachment()
     }
 
-    func windowDidResize(_ notification: Notification) {
-        guard let configuration, notification.object as? NSWindow === configuration,
-              remote?.parent === configuration else { return }
-        layoutRemote(nextTo: configuration, fitToScreen: false)
-    }
-
-    func windowDidEndLiveResize(_ notification: Notification) {
-        guard let configuration, notification.object as? NSWindow === configuration,
-              remote?.parent === configuration else { return }
-        layoutRemote(nextTo: configuration, fitToScreen: true)
-    }
-
     func windowDidChangeScreen(_ notification: Notification) {
         guard let configuration, notification.object as? NSWindow === configuration,
               remote?.parent === configuration else { return }
         layoutRemote(nextTo: configuration, fitToScreen: true)
-    }
-
-    func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame: NSRect) -> NSRect {
-        guard window === configuration, isRemoteModelVisible, model.hasRemote else { return defaultFrame }
-        let reservedWidth = remotePanelWidth(for: min(LiveRemoteView.preferredHeight, defaultFrame.height))
-        var frame = defaultFrame
-        frame.size.width = max(window.minSize.width, defaultFrame.width - reservedWidth)
-        return frame
     }
 
     private func remotePanelWidth(for height: CGFloat) -> CGFloat {
@@ -453,8 +487,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func titledWindow<Content: View>(_ title: String, size: NSSize,
-                                            extraStyle: NSWindow.StyleMask = [], content: Content) -> NSWindow {
-        let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
+                                            extraStyle: NSWindow.StyleMask = [], resizable: Bool = true,
+                                            content: Content) -> NSWindow {
+        var style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
+        if resizable { style.insert(.resizable) }
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: style.union(extraStyle), backing: .buffered, defer: false)
         window.title = title
