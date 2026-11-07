@@ -60,9 +60,10 @@ private func libraryArchive(_ directory: URL) throws -> Data {
     return try Data(contentsOf: archive)
 }
 
-private func sourceCatalog(_ archive: Data, id: String = "xiaomi-2-pro", release: String = "1.0.0",
+private func sourceCatalog(_ archive: Data, id: String = "xiaomi-2-pro", release: String? = nil,
                            hash: String? = nil) throws -> Data {
-    try JSONSerialization.data(withJSONObject: [
+    let release = try release ?? RemoteDefinition.read(resourceFixture()).manifest.release
+    return try JSONSerialization.data(withJSONObject: [
         "formatVersion": 2, "id": "test-source", "name": ["en": "Test source", "zh": "测试源"],
         "models": [["id": id, "release": release, "name": ["en": "Xiaomi Remote", "zh": "小米遥控器"],
                     "summary": ["en": "Test remote", "zh": "测试遥控器"], "package": "remote.zip",
@@ -120,7 +121,7 @@ func subscriptionMismatchNeverInstallsOrReplacesResources(_ mismatch: String) as
     let url = URL(string: "https://fixtures.example/\(UUID().uuidString)/catalog.json")!
     let id = try library.addSource(url.absoluteString)
     let catalog = try sourceCatalog(data, id: mismatch == "identity" ? "wrong-remote" : "xiaomi-2-pro",
-                                    release: mismatch == "release" ? "2.0.0" : "1.0.0",
+                                    release: mismatch == "release" ? "2.0.0" : nil,
                                     hash: mismatch == "hash" ? String(repeating: "0", count: 64) : nil)
     LibraryURLProtocol.register(url, .init(status: 200, data: catalog))
     LibraryURLProtocol.register(url.deletingLastPathComponent().appending(path: "remote.zip"), .init(status: 200, data: data))

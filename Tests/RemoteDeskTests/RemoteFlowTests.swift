@@ -864,6 +864,51 @@ private func waitUntil(_ condition: () -> Bool) async throws {
 }
 
 @Test @MainActor
+func xiaomiVolumeGesturesRetireOnlyWhenSavedProfilesDoNotUseThem() throws {
+    let files = FileManager.default
+    let directory = files.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    try files.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? files.removeItem(at: directory) }
+    let package = try #require(Bundle.module.resourceURL?.appending(path: "Fixtures/Packages/xiaomi-2-pro"))
+    let oldPackage = directory.appending(path: "old")
+    try files.copyItem(at: package, to: oldPackage)
+    let oldManifest = oldPackage.appending(path: "manifest.json")
+    var manifest = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: oldManifest)) as? [String: Any])
+    manifest["release"] = "0.0.1"
+    manifest["retiredGestureSlots"] = nil
+    try JSONSerialization.data(withJSONObject: manifest).write(to: oldManifest)
+    let oldLayout = oldPackage.appending(path: "layout.json")
+    var layout = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: oldLayout)) as? [String: Any])
+    var keys = try #require(layout["keys"] as? [[String: Any]])
+    let volumeUp = try #require(keys.firstIndex { $0["id"] as? String == "plus" })
+    keys[volumeUp]["doublePress"] = true
+    keys[volumeUp]["longPress"] = true
+    layout["keys"] = keys
+    try JSONSerialization.data(withJSONObject: layout).write(to: oldLayout)
+
+    let model = RemoteModel(hid: InputFixture(devices: []), storeURL: directory.appending(path: "configuration.json"),
+                            runAction: { _, _ in })
+    try model.installModel(from: oldPackage)
+    model.setAction(.showDesktop, for: "plus-double")
+    #expect(model.saveConfigurationChanges(as: "Volume gesture"))
+    let customProfile = try #require(model.profile?.id)
+    #expect(model.selectProfile(AgentProfile.defaults.id))
+    #expect(throws: RemotePackageError.self) { try model.installModel(from: package) }
+    #expect(model.remoteDefinition.manifest.release == "0.0.1")
+    #expect(model.selectProfile(customProfile))
+    #expect(model.editableActions["plus-double"] == .showDesktop)
+    model.setAction(nil, for: "plus-double")
+    #expect(model.saveConfigurationChanges())
+    try model.installModel(from: package)
+    #expect(model.selectProfile(AgentProfile.defaults.id))
+    for (id, action) in [("plus", AgentAction.volumeUp), ("minus", .volumeDown)] {
+        let key = try #require(model.keys.first { $0.id == id })
+        #expect(key.actionSlots == [id])
+        #expect(model.editableActions[id] == action)
+    }
+}
+
+@Test @MainActor
 func importsOfflineModelAndRoutesItsHardwareWithoutSharingXiaomiActions() async throws {
     let xiaomi = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米")
     let device = DeviceID(vendor: 0x1234, product: 0x5678, name: "Test Remote")

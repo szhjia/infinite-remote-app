@@ -129,6 +129,7 @@
 "已由其他来源安装" = "Installed from Another Source";
 "已载入默认按键，保存后生效。" = "Default key mappings loaded. Save to apply them.";
 "已连接" = "Connected";
+"已连接 · 未授权" = "Connected · Permission required";
 "已连接 · 已暂停" = "Connected · Paused";
 "已连接 · 未监听" = "Connected · Not listening";
 "已连接 · 设备无法区分" = "Connected · Devices cannot be distinguished";
@@ -229,6 +230,9 @@
 "此型号标识已被无法读取的安装占用。" = "An unreadable installation already occupies this model ID.";
 "此快捷键已改绑或停用，请重新选择。" = "This shortcut was changed or disabled. Select it again.";
 "此更新移除了现有动作槽位。" = "This update removes existing action slots.";
+"停用的手势槽位无效。" = "The retired gesture slots are invalid.";
+"无法核对已保存的配置，不能停用手势槽位。" = "Gesture slots cannot be retired because saved profiles could not be checked.";
+"此型号包将停用自定义配置中仍在使用的手势。请先清除对应绑定。" = "This model package retires gestures used by custom profiles. Clear those bindings first.";
 "此订阅源已存在。" = "This subscription source already exists.";
 "此配置与当前遥控器型号不匹配。" = "This configuration does not match the current remote model.";
 "此配置名称已存在。" = "A configuration with this name already exists.";
@@ -239,6 +243,7 @@
 "浏览资源库" = "Browse Library";
 "添加" = "Add";
 "添加你的第一个遥控器" = "Add Your First Remote";
+"添加应用" = "Add App";
 "添加应用…" = "Add App…";
 "添加订阅源" = "Add Source";
 "添加遥控器" = "Add Remote";
@@ -315,7 +320,7 @@
 "选择系统快捷键…" = "Select System Shortcut…";
 "选择遥控器" = "Select Remote";
 "遥控器" = "Remote";
-"遥控器资源库" = "Remote Library";
+"资源库" = "Library";
 "遥控触发已暂停" = "Remote actions paused";
 "配置保存失败：%@" = "Could not save configuration: %@";
 "配置列表" = "Configurations";
@@ -397,8 +402,6 @@
 "请按下并松开一个实体按键。" = "Press and release a physical button.";
 "刷新订阅源" = "Refresh Sources";
 "资源库操作" = "Library Actions";
-"型号目录" = "Model Catalog";
-"结果数：%@" = "Results: %@";
 "筛选订阅源" = "Filter by Source";
 "%@ 个订阅源刷新失败" = "Source refresh failures: %@";
 "导入 ZIP" = "Import ZIP";
@@ -412,7 +415,7 @@
 "订阅源数量已达上限。" = "The subscription source limit has been reached.";
 "找不到此订阅源。" = "This subscription source could not be found.";
 "默认订阅源不能修改或移除。" = "The default subscription source cannot be edited or removed.";
-"无限遥控器资源库" = "Infinite Remote Library";
+"官方资源库" = "Official Library";
 "默认订阅源的地址不能修改，且不能移除。" = "The default source address cannot be changed, and the source cannot be removed.";
 "自动名称" = "Automatic name";
 "可用应用" = "Available Apps";
@@ -491,7 +494,7 @@
 "聚焦边栏" = "Focus Sidebar";
 "聚焦内容" = "Focus Content";
 "打开所选项目" = "Open Selected Item";
-"所选项目的右键菜单" = "Show Item Menu";
+"弹出项目菜单" = "Show Item Menu";
 "上一级文件夹" = "Enclosing Folder";
 "历史后退" = "Go Back in History";
 "要切换编辑的应用吗？" = "Switch the App Being Edited?";
@@ -536,6 +539,17 @@
 "遥控器麦克风连接超时。" = "Remote microphone connection timed out.";
 "启用遥控器麦克风" = "Enable Remote Microphone";
 "停用遥控器麦克风" = "Disable Remote Microphone";
+"遥控器麦克风" = "Remote Microphone";
+"使用遥控器收音时，请按住语音键。" = "Hold the voice button to speak into the remote microphone.";
+"macOS 内置听写" = "Built-in macOS Dictation";
+"长按录音" = "Hold to record";
+"启用遥控器麦克风后可长按录音。" = "Turn on the remote microphone to hold the voice button and record.";
+"语音键功能" = "Voice button action";
+"默认语音" = "Default Voice";
+"设置默认听写…" = "Set Default Dictation…";
+"清除默认语音" = "Clear Default Voice";
+"使用默认语音" = "Use Default Voice";
+"%@ · %@ · 全局动作不可编辑" = "%@ · %@ · Global action cannot be edited";
 
 "安装遥控器语音驱动" = "Install the Remote Voice Driver";
 "跳过此步" = "Skip This Step";

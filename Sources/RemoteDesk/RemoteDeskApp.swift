@@ -359,13 +359,15 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func configurationWindow() -> NSWindow {
         if let configuration { return configuration }
-        let window = titledWindow(workspacePage.title, size: Workspace.windowSize,
+        let layout = WorkspaceLayout.load(from: model.dataDirectory)
+        let window = titledWindow(workspacePage.title, size: layout.initialSize,
                                   extraStyle: .fullSizeContentView,
                                   content: Workspace(model: model, library: resourceLibrary,
                                       page: Binding(get: { [weak self] in self?.workspacePage ?? .remote },
                                                     set: { [weak self] in self?.workspacePage = $0 }),
                                       showDiagnostics: { [weak self] in self?.showDiagnostics() },
                                       showSettings: { [weak self] in self?.showSettings($0) },
+                                      layout: layout,
                                       firstKeyToConfigure: Binding(
                                           get: { [weak self] in self?.firstKeyToConfigure },
                                           set: { [weak self] in self?.firstKeyToConfigure = $0 })))
@@ -386,12 +388,12 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
             titlebar.addSubview(pageTitle)
             NSLayoutConstraint.activate([
                 pageTitle.leadingAnchor.constraint(equalTo: titlebar.leadingAnchor,
-                                                   constant: Workspace.sidebarWidth + 25),
+                                                   constant: layout.sidebarWidth + 25),
                 pageTitle.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
             ])
         }
         window.collectionBehavior.insert(.fullScreenNone)
-        window.contentMinSize = NSSize(width: 890, height: 520)
+        window.contentMinSize = layout.minimumSize
         configuration = window
         return window
     }
@@ -588,12 +590,14 @@ private extension RemoteWindows {
         unowned let windows: RemoteWindows
 
         var body: some View {
+            let model = windows.model
             HStack(spacing: 8) {
-                if windows.workspacePage == .remote && windows.model.hasRemote {
-                    Label(windows.model.connectionStatus,
-                          systemImage: windows.model.canReadKeys ? "waveform" : "exclamationmark.circle")
+                if windows.workspacePage == .remote && model.hasRemote {
+                    Label(model.connected ? L10n.tr(model.canListen ? "已连接" : "已连接 · 未授权") : model.connectionStatus,
+                          systemImage: model.canReadKeys ? "waveform" : "exclamationmark.circle")
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
+                        .help(model.connectionStatus)
                 }
                 RemoteModelButton(windows: windows)
             }

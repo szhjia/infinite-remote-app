@@ -29,8 +29,32 @@ struct ResourceLibraryView: View {
     }
 
     var body: some View {
+        GeometryReader { geometry in
+            catalog(width: geometry.size.width)
+        }
+        .onChange(of: installedVersions) { previous, current in
+            if let id = current.keys.sorted().first(where: { current[$0] != previous[$0] }) {
+                recentlyInstalledID = id
+            }
+        }
+        .onChange(of: library.sources.map(\.id)) { _, sourceIDs in
+            if sourceIDs.count < 2 || !sourceIDs.contains(selectedSource) { selectedSource = "" }
+        }
+        .task {
+            guard !didLoad else { return }
+            didLoad = true
+            for id in library.sources.filter({ $0.catalog == nil }).map(\.id) { await library.refresh(id) }
+        }
+    }
+
+    private func catalog(width: CGFloat) -> some View {
         let results = entries
-        VStack(alignment: .leading, spacing: 16) {
+        let minimumGutter: CGFloat = 16
+        let columns = max(1, Int((width - minimumGutter) / (ResourceCard.width + minimumGutter)))
+        let gutter = max(0, (width - CGFloat(columns) * ResourceCard.width) / CGFloat(columns + 1))
+        let gridWidth = CGFloat(columns) * ResourceCard.width + CGFloat(columns - 1) * gutter
+
+        return VStack(alignment: .leading, spacing: 16) {
             libraryActions
             if let id = recentlyInstalledID,
                let definition = model.installedModels.first(where: { $0.id == id }) {
@@ -54,33 +78,22 @@ struct ResourceLibraryView: View {
                 Text(issue).font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
             sourceIssues
-            if !library.refreshing.isEmpty { ProgressView(L10n.tr("正在刷新订阅源…")).controlSize(.small) }
-            catalogHeading(count: results.count)
             ScrollView {
                 if results.isEmpty && library.refreshing.isEmpty {
                     emptyResults.frame(maxWidth: .infinity).padding(40)
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 245, maximum: 360), alignment: .top)], spacing: 16) {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(ResourceCard.width), spacing: gutter),
+                                         count: columns), alignment: .leading, spacing: 16) {
                     ForEach(results.map { LibraryEntry(source: $0.0, listing: $0.1) }) { entry in
                         resourceCard(entry.listing, source: entry.source)
                     }
                 }
+                .frame(width: gridWidth)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(24)
-        .onChange(of: installedVersions) { previous, current in
-            if let id = current.keys.sorted().first(where: { current[$0] != previous[$0] }) {
-                recentlyInstalledID = id
-            }
-        }
-        .onChange(of: library.sources.map(\.id)) { _, sourceIDs in
-            if sourceIDs.count < 2 || !sourceIDs.contains(selectedSource) { selectedSource = "" }
-        }
-        .task {
-            guard !didLoad else { return }
-            didLoad = true
-            for id in library.sources.filter({ $0.catalog == nil }).map(\.id) { await library.refresh(id) }
-        }
+        .padding(.horizontal, gutter)
+        .padding(.vertical, 24)
     }
 
     private var libraryActions: some View {
@@ -96,6 +109,15 @@ struct ResourceLibraryView: View {
                 Label(L10n.tr("刷新订阅源"), systemImage: "arrow.clockwise")
             }
             .disabled(library.sources.isEmpty || !library.refreshing.isEmpty)
+            ZStack {
+                Color.clear.accessibilityHidden(true)
+                if !library.refreshing.isEmpty {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel(L10n.tr("正在刷新订阅源…"))
+                }
+            }
+            .frame(width: 16, height: 16)
             if library.sources.count > 1 {
                 Picker(L10n.tr("筛选订阅源"), selection: $selectedSource) {
                     Text(L10n.tr("全部订阅源")).tag("")
@@ -104,16 +126,6 @@ struct ResourceLibraryView: View {
                 .labelsHidden()
                 .frame(maxWidth: 180)
             }
-        }
-    }
-
-    private func catalogHeading(count: Int) -> some View {
-        HStack(spacing: 10) {
-            Text(L10n.tr("型号目录"))
-                .font(.headline).accessibilityAddTraits(.isHeader)
-            Text(count, format: .number)
-                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                .accessibilityLabel(L10n.format("结果数：%@", count.formatted()))
         }
     }
 
@@ -196,31 +208,22 @@ struct ResourceLibraryView: View {
         let key = source.id + ":" + listing.id
         let own = installed == nil || model.installedOwner(of: listing.id) == source.id
         let update = installed.map { listing.release.compare($0.manifest.release, options: .numeric) == .orderedDescending } ?? false
-        return VStack(alignment: .leading, spacing: 12) {
-            CatalogPreview(url: library.previewURL(listing, source: source))
-                .frame(maxWidth: .infinity).frame(height: 140).padding(8)
-            if let brand = listing.brand { Text(brand.name.resolve()).font(.caption).foregroundStyle(.secondary) }
-            Text(listing.name.resolve()).font(.headline).fixedSize(horizontal: false, vertical: true)
-            Text(listing.release).font(.caption.monospaced()).foregroundStyle(.secondary)
-            Text(listing.summary.resolve()).font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(source.title).font(.caption).foregroundStyle(.tertiary)
-            if let error = library.errors[key] { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-            HStack {
-                if library.installing.contains(key) { ProgressView().controlSize(.small) }
-                Button(L10n.tr(!own ? "已由其他来源安装" : installed == nil ? "添加遥控器" : update ? "更新" : "已添加")) {
-                    Task { await library.install(listing, from: source, into: model) }
-                }.buttonStyle(.borderedProminent)
-                    .disabled(!own || (installed != nil && !update) || !library.installing.isEmpty || importing || model.hasConfigurationChanges)
-                if installed != nil {
-                    Button(L10n.tr("选择")) { model.previewModel(listing.id) }
-                        .disabled(model.hasConfigurationChanges)
-                }
-            }
+        let localArtwork = own ? installed?.artwork : nil
+        let localLogo = own && installed?.manifest.brand?.id == listing.brand?.id ? installed?.logo : nil
+        return ResourceCard(
+            listing: listing, sourceTitle: source.title,
+            previewURL: library.previewURL(listing, source: source), localArtwork: localArtwork,
+            brandLogoURL: library.brandLogoURL(listing, source: source), localLogo: localLogo,
+            isInstalled: installed != nil, ownsInstallation: own, hasUpdate: update,
+            isInstalling: library.installing.contains(key),
+            canInstall: library.installing.isEmpty && !importing && !model.hasConfigurationChanges,
+            canOpen: !model.hasConfigurationChanges || model.remoteDefinition.id == listing.id,
+            error: library.errors[key]
+        ) {
+            Task { await library.install(listing, from: source, into: model) }
+        } open: {
+            openWorkspace(listing.id)
         }
-        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor).opacity(0.5)))
     }
 
     private func importPackage() {
@@ -238,6 +241,140 @@ struct ResourceLibraryView: View {
             do { try await model.installResourcePackage(from: url); importError = nil }
             catch { importError = error.localizedDescription }
         }
+    }
+}
+
+private struct ResourceCard: View {
+    static let width: CGFloat = 344
+    private static let previewHeight: CGFloat = 96
+    private static let titleSize: CGFloat = 16
+    private static let titleLineHeight: CGFloat = {
+        let font = NSFont.systemFont(ofSize: titleSize, weight: .semibold)
+        return ceil(font.ascender - font.descender + font.leading)
+    }()
+
+    let listing: RemoteListing
+    let sourceTitle: String
+    let previewURL: URL?
+    let localArtwork: NSImage?
+    let brandLogoURL: URL?
+    let localLogo: NSImage?
+    let isInstalled: Bool
+    let ownsInstallation: Bool
+    let hasUpdate: Bool
+    let isInstalling: Bool
+    let canInstall: Bool
+    let canOpen: Bool
+    let error: String?
+    let install: () -> Void
+    let open: () -> Void
+
+    @State private var showsError = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                CatalogPreview(url: previewURL, fallback: localArtwork)
+                    .frame(width: 52, height: Self.previewHeight, alignment: .top)
+                VStack(alignment: .leading, spacing: 6) {
+                    titleRow
+                    Text(listing.summary.resolve())
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .help(listing.summary.resolve())
+                    Text(sourceTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(sourceTitle)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: Self.previewHeight, alignment: .top)
+            .padding(.horizontal, 16)
+            .frame(height: 116)
+            footer
+        }
+        .frame(width: Self.width, height: 160)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var titleRow: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Text(listing.name.resolve())
+                    .font(.system(size: Self.titleSize, weight: .semibold))
+                    .lineLimit(1)
+                    .help(listing.name.resolve())
+                if let brand = listing.brand {
+                    CatalogBrandMark(url: brandLogoURL, fallback: localLogo, name: brand.name.resolve(),
+                                     height: Self.titleLineHeight)
+                }
+            }
+            Spacer(minLength: 0)
+            Text(listing.release)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: 68, alignment: .trailing)
+                .fixedSize(horizontal: true, vertical: false)
+                .help(listing.release)
+        }
+        .frame(height: Self.titleLineHeight)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if isInstalling {
+                ProgressView().controlSize(.small)
+                    .accessibilityLabel(L10n.tr("正在添加遥控器…"))
+            } else if isInstalled {
+                Label {
+                    Text(L10n.tr(ownsInstallation ? "已添加" : "已由其他来源安装"))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.green)
+                }
+                .font(.caption)
+            }
+            if let error {
+                Button { showsError.toggle() } label: {
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(error)
+                .help(error)
+                .popover(isPresented: $showsError) {
+                    Text(error).textSelection(.enabled).padding(14).frame(width: 280)
+                }
+            }
+            Spacer(minLength: 4)
+            if ownsInstallation && (!isInstalled || hasUpdate) {
+                Button(L10n.tr(hasUpdate ? "更新" : "添加遥控器"), action: install)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canInstall)
+            }
+            if isInstalled {
+                Button(action: open) {
+                    HStack(spacing: 7) {
+                        Text(L10n.tr("打开工作台"))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .accessibilityHidden(true)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canOpen)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 44)
+        .background(colorScheme == .dark ? Color.white.opacity(0.055) : Color.black.opacity(0.045))
     }
 }
 
@@ -468,31 +605,65 @@ private struct SubscriptionSourceEditor: View {
 
 struct CatalogPreview: View {
     let url: URL?
+    var fallback: NSImage? = nil
     @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let image { Image(nsImage: image).resizable().scaledToFit() }
+            if let image = image ?? fallback { Image(nsImage: image).resizable().scaledToFit() }
             else { Image(systemName: "appletvremote.gen4").resizable().scaledToFit().foregroundStyle(.tertiary) }
         }
         .accessibilityHidden(true)
         .task(id: url) {
             image = nil
-            guard let url else { return }
-            do {
-                let data = try await ResourceLibrary.fetch(url, limit: 4 * 1024 * 1024, session: .shared)
-                guard !Task.isCancelled, let source = CGImageSourceCreateWithData(data as CFData, nil),
-                      CGImageSourceGetCount(source) == 1,
-                      let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-                      let width = properties[kCGImagePropertyPixelWidth] as? Int, (1...4096).contains(width),
-                      let height = properties[kCGImagePropertyPixelHeight] as? Int, (1...4096).contains(height),
-                      let bitmap = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceThumbnailMaxPixelSize: 280,
-                        kCGImageSourceCreateThumbnailWithTransform: true
-                      ] as CFDictionary) else { return }
-                image = NSImage(cgImage: bitmap, size: .zero)
-            } catch { /* A missing preview never prevents a validated package install. */ }
+            let loaded = await CatalogImage.load(url, maxPixelSize: 280)
+            if !Task.isCancelled { image = loaded }
         }
+    }
+}
+
+private struct CatalogBrandMark: View {
+    let url: URL?
+    let fallback: NSImage?
+    let name: String
+    let height: CGFloat
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image = image ?? fallback {
+                let aspect = image.size.width / max(image.size.height, 1)
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: min(56, height * aspect), height: height)
+                    .fixedSize()
+                    .accessibilityLabel(name)
+                    .help(name)
+            }
+        }
+        .task(id: url) {
+            image = nil
+            let loaded = await CatalogImage.load(url, maxPixelSize: 112)
+            if !Task.isCancelled { image = loaded }
+        }
+    }
+}
+
+private enum CatalogImage {
+    @MainActor static func load(_ url: URL?, maxPixelSize: Int) async -> NSImage? {
+        guard let url,
+              let data = try? await ResourceLibrary.fetch(url, limit: 4 * 1024 * 1024, session: .shared),
+              !Task.isCancelled, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, (1...4096).contains(width),
+              let height = properties[kCGImagePropertyPixelHeight] as? Int, (1...4096).contains(height),
+              let bitmap = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+                kCGImageSourceCreateThumbnailWithTransform: true
+              ] as CFDictionary) else { return nil }
+        return NSImage(cgImage: bitmap, size: .zero)
     }
 }

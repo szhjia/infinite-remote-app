@@ -62,7 +62,7 @@
       }
     }
   ],
-  "release": "1.0.0",
+  "release": "0.0.2",
   "summary": {
     "zh": "已适配的蓝牙遥控器，可用于应用切换、媒体选择和常用 Mac 操作。",
     "en": "A supported Bluetooth remote for app switching, media selection, and everyday Mac actions."
@@ -164,6 +164,7 @@
       "mediaChooser": {}
     }
   },
+  "retiredGestureSlots": ["plus-double", "plus-long"],
   "behavior": {
     "coalescedKeys": [
       "home",

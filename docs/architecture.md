@@ -2,6 +2,8 @@
 
 Infinite Remote 使用 SwiftUI、AppKit 和 SwiftPM。硬件监听、配置与动作分开，`RemoteCore` 只依赖 Foundation。正式应用不包含真实遥控器型号；型号由独立资源包提供。
 
+[macOS 界面图集](ui-reference.html)收录了配置工作台的视图层级，以及资源库、应用设置和使用引导的窗口实拍。
+
 ```text
 订阅目录 / 本地 ZIP → 校验与安装 → 已安装型号、默认动作和行为声明
                                      ↓

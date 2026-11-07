@@ -8,12 +8,12 @@ GitHub 仓库为 `szhjia/infinite-remote-app`。
 
 ## v0.0.3 版本
 
-从 [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.3) 下载 DMG，打开后把无限遥控器拖进「应用程序」。安装包适用于运行 macOS 14 或更高版本的 Apple 芯片 Mac。签名详见[发布说明](RELEASE_NOTES.md)。运行 `./scripts/package-release.sh` 可生成 ZIP 归档。
+从 [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.2) 下载 DMG，打开后把无限遥控器拖进「应用程序」。安装包适用于运行 macOS 14 或更高版本的 Apple 芯片 Mac。签名详见[发布说明](RELEASE_NOTES.md)。运行 `./scripts/package-release.sh` 可生成 ZIP 归档。
 
 ## 使用
 
 1. 启动 `dist/Infinite Remote.app`。新安装不内置真实遥控器型号。首次引导依次介绍添加型号、输入监控、辅助功能和连接检查，任一步都可跳过，之后可从「设置」重新打开。界面跟随系统语言，其他语言回退到英语。
-2. 打开侧栏「遥控器资源库」，从可用订阅源添加型号，或点「导入 ZIP…」直接选择本地 ZIP，也支持已解压的型号文件夹。ZIP 无需提前解压。已安装型号显示在侧栏，未连接时也能选择，离线仍可使用。
+2. 打开侧栏「资源库」，从可用订阅源添加型号，或点「导入 ZIP…」直接选择本地 ZIP，也支持已解压的型号文件夹。ZIP 无需提前解压。已安装型号显示在侧栏，未连接时也能选择，离线仍可使用。
 3. 在 macOS 蓝牙设置配对遥控器，并选择已安装的对应型号。先授予「辅助功能」，如果应用仍无法读取按键，再单独授予「输入监控」。授权后回到应用重新检查，按系统提示重新打开应用。
 4. 在对应行选择单击、双击或长按动作，再点「保存」。不能识别的信号可选中对应行，从「恢复默认」旁菜单选择「手动校准当前键」。型号提供的默认动作可另存为命名配置；用户映射和校准记录独立于资源保存。
 5. 工具栏可暂停响应，工作台标题栏控制浮动遥控器模型。模型左上角或右键菜单可以打开或关闭工作台。工作台首次打开后，菜单栏图标会出现，可以分别恢复两个窗口。诊断会显示按下与松开，期间暂停应用自身的配置动作。
@@ -68,7 +68,7 @@ REMOTEDESK_SIGNING_IDENTITY='Apple Development: 你的证书名称' ./scripts/bu
 
 在工作台中间栏打开「显示设备说明」可查看机身引线。点击机身或引线标签可定位到按键配置，点击 NFC 标记可查看触碰位置及硬件说明。
 
-「遥控器资源库 → 导入 ZIP…」接受本地 ZIP 或型号文件夹，资源复制到 `~/Library/Application Support/RemoteDesk/RemoteModels/`。小米型号源文件、说明和协议由独立 Remote Hub 仓库维护；正式应用不内置真实型号，旧版 v1 资源只作为测试夹具保留。
+「资源库 → 导入 ZIP…」接受本地 ZIP 或型号文件夹，资源复制到 `~/Library/Application Support/RemoteDesk/RemoteModels/`。小米型号源文件、说明和协议由独立 Remote Hub 仓库维护；正式应用不内置真实型号，旧版 v1 资源只作为测试夹具保留。
 
 - `manifest.json` v2 声明稳定型号及设备 ID、三段数字 `release`、型号/品牌/简介/硬件说明的本地化文字、可选包内品牌 PNG、默认动作、目标应用 bundle ID 和输入行为。英语为必需回退，中文跟随系统语言；仍兼容读取 v1 包。
 - `layout.json` 声明 PNG 尺寸、可见机身矩形、按键名称、热区和硬件说明锚点。中心和宽高为相对整张 PNG 的归一化坐标，原点在左上；支持椭圆、矩形与扇区。手势标记提供 `-double`/`-long` 动作槽；更新不能移除已被配置引用的槽。

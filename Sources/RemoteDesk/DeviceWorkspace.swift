@@ -3,10 +3,8 @@ import RemoteCore
 import SwiftUI
 
 struct DeviceWorkspace: View {
-    private static let mappingWidth: CGFloat = 604
-    private static let appRailWidth: CGFloat = 88
-
     let model: RemoteModel
+    let layout: WorkspaceLayout
     @Binding var guideSelection: DeviceGuideTarget?
     @Binding var shortcutPicker: KeyMappingEditor.SystemShortcutPicker?
     @Binding var firstKeyToConfigure: String?
@@ -31,19 +29,14 @@ struct DeviceWorkspace: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
+                Divider()
             }
-            Divider()
-            GeometryReader { geometry in
-                let configWidth = Self.appRailWidth + Self.mappingWidth + 1
-                HStack(spacing: 0) {
-                    DeviceStage(model: model, selection: $guideSelection, onLocateKey: locateKey,
-                                showPermissions: showPermissions)
-                        .frame(width: max(320, geometry.size.width - configWidth - 1))
-                    Divider()
-                    appMapping
-                }
+            HStack(spacing: 0) {
+                DeviceStage(model: model, selection: $guideSelection, contentWidth: layout.deviceContentWidth,
+                            onLocateKey: locateKey, showPermissions: showPermissions)
+                Divider().frame(width: WorkspaceLayout.dividerWidth)
+                appMapping.frame(width: layout.appMappingWidth)
             }
-            .frame(maxHeight: .infinity)
         }
         .onAppear(perform: refreshChatGPTInstallation)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -61,19 +54,16 @@ struct DeviceWorkspace: View {
                 AppRail(apps: model.apps, selectedBundleID: model.editingApp.bundleID,
                         activeBundleID: model.activeBundleID, chatGPTURL: chatGPTURL,
                         onSelect: onSelectApp, onAdd: onAddApp)
-                    .frame(width: Self.appRailWidth)
-                Divider()
-                ScrollView(.horizontal) {
-                    KeyMappingEditor(model: model, chatGPTIsMissing: chatGPTIsMissing,
-                                     guideSelection: $guideSelection, shortcutPicker: $shortcutPicker,
-                                     firstKeyToConfigure: $firstKeyToConfigure,
-                                     onLocateKey: locateKey, onCommand: onEditorCommand)
-                        .frame(width: Self.mappingWidth)
-                }
-                .defaultScrollAnchor(.leading)
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                    .frame(width: layout.appRailWidth)
+                Divider().opacity(0.5).frame(width: WorkspaceLayout.dividerWidth)
+                KeyMappingEditor(model: model, chatGPTIsMissing: chatGPTIsMissing,
+                                 guideSelection: $guideSelection, shortcutPicker: $shortcutPicker,
+                                 firstKeyToConfigure: $firstKeyToConfigure,
+                                 onLocateKey: locateKey, onCommand: onEditorCommand)
+                    .frame(width: layout.keyMappingWidth)
             }
         }
+        .background(Color(nsColor: .controlBackgroundColor), ignoresSafeAreaEdges: .top)
     }
 
     private var chatGPTMissingNotice: some View {

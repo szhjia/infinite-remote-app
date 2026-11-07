@@ -3,6 +3,7 @@ import SwiftUI
 struct DeviceStage: View {
     let model: RemoteModel
     @Binding var selection: DeviceGuideTarget?
+    let contentWidth: CGFloat
     let onLocateKey: (String) -> Void
     let showPermissions: () -> Void
 
@@ -19,6 +20,7 @@ struct DeviceStage: View {
                         .buttonStyle(.borderedProminent)
                 }
             }
+            .padding(.horizontal, 10)
             Spacer(minLength: 0)
             DeviceArtworkGuide(model: model, selection: $selection, locateKey: onLocateKey)
                 .frame(maxHeight: 475)
@@ -35,6 +37,7 @@ struct DeviceStage: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .padding(.horizontal, 10)
             if !model.remoteDefinition.manifest.capabilities.isEmpty {
                 Button(L10n.tr("硬件能力")) { showsCapabilities.toggle() }
                     .buttonStyle(.link)
@@ -43,11 +46,30 @@ struct DeviceStage: View {
                         DeviceCapabilityDetails(capabilities: model.remoteDefinition.manifest.capabilities)
                     }
             }
+            if model.supportsRemoteMicrophone {
+                VStack(spacing: 4) {
+                    Toggle(L10n.tr("遥控器麦克风"), isOn: Binding(
+                        get: { model.usesRemoteMicrophone },
+                        set: { if $0 != model.usesRemoteMicrophone { model.toggleRemoteMicrophone() } }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    if let status = model.remoteMicrophone.status {
+                        Text(status).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if model.usesRemoteMicrophone {
+                        Text(L10n.tr("使用遥控器收音时，请按住语音键。"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 10)
+            }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
         .padding(.vertical, 16)
-        .frame(maxHeight: .infinity)
+        .frame(width: contentWidth)
+        .frame(minWidth: contentWidth, maxWidth: .infinity, maxHeight: .infinity)
         .background {
             RadialGradient(colors: [accent.opacity(0.09), .clear], center: .center, startRadius: 12, endRadius: 240)
         }

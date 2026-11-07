@@ -8,12 +8,12 @@ The GitHub repository is `szhjia/infinite-remote-app`.
 
 ## Release v0.0.3
 
-Download the DMG from [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.3), open it, and drag Infinite Remote to Applications. The published build requires an Apple silicon Mac with macOS 14 or later. See the [release notes](RELEASE_NOTES.md) for signing details. To build a ZIP archive, run `./scripts/package-release.sh`.
+Download the DMG from [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.2), open it, and drag Infinite Remote to Applications. The published build requires an Apple silicon Mac with macOS 14 or later. See the [release notes](RELEASE_NOTES.md) for signing details. To build a ZIP archive, run `./scripts/package-release.sh`.
 
 ## Usage
 
 1. Launch `dist/Infinite Remote.app`. New installations contain no real remote models. The skippable setup walks through adding a model, Input Monitoring, Accessibility, and a connection check; reopen it from Settings at any time. The interface follows the system language, with English fallback.
-2. Open Remote Library in the sidebar. Install a model from a working subscription, or choose Import ZIP to select a local ZIP directly; an unpacked model folder also works. No extraction step is needed for ZIP import. Installed models appear in the sidebar and remain available offline, even while disconnected.
+2. Open Library in the sidebar. Install a model from a working subscription, or choose Import ZIP to select a local ZIP directly; an unpacked model folder also works. No extraction step is needed for ZIP import. Installed models appear in the sidebar and remain available offline, even while disconnected.
 3. Pair the remote in macOS Bluetooth settings and select its installed model. Start with Accessibility. If the app still cannot read buttons, grant Input Monitoring separately. Return to the app to recheck, and reopen it if macOS asks.
 4. Select a single-press, double-press, or long-press action and click Save. For an unrecognized signal, select the row and choose Calibrate current key manually from the menu beside Restore Defaults. Model-supplied default actions can be saved as named configurations; user mappings and learned inputs remain separate from installed resources.
 5. Pause responses from the toolbar. The workbench title bar controls the floating remote model. Use the model’s top-left button or context menu to open or close the workbench. When the workbench first opens, the menu bar icon appears and can reopen either window separately. Diagnostics report press/release events and suspend the app’s own configured actions.
@@ -68,7 +68,7 @@ After switching to a fixed signature, grant permissions again on first launch. L
 
 Open “Show device guide” in the workspace's middle column to view body callouts. Click the body or a callout label to locate the corresponding button configuration. Click the NFC marker to view touch location and hardware notes.
 
-Remote Library → Import ZIP accepts a ZIP or local model folder. Installed resources are copied to `~/Library/Application Support/RemoteDesk/RemoteModels/`. The maintained Xiaomi model, guides and protocol documentation live in the independent Remote Hub repository; real model resources are not bundled in this app. Test-only v1 fixtures remain for backward compatibility.
+Library → Import ZIP accepts a ZIP or local model folder. Installed resources are copied to `~/Library/Application Support/RemoteDesk/RemoteModels/`. The maintained Xiaomi model, guides and protocol documentation live in the independent Remote Hub repository; real model resources are not bundled in this app. Test-only v1 fixtures remain for backward compatibility.
 
 - `manifest.json` v2 declares stable model/device IDs, a numeric `release`, localized model/brand/summary/capability text, optional package-local PNG logo, default actions, target bundle ID and input behavior. English is required as a fallback; Chinese translations follow system language. Legacy v1 packages remain readable.
 - `layout.json` declares PNG dimensions, the visible body rectangle, key names, hotspots and capability anchors. Normalized center/size coordinates are relative to the full PNG, with the origin at the top left. Ellipse, rectangle and sector shapes are supported. Gesture flags create `-double`/`-long` action slots; package updates cannot remove slots used by saved configurations.

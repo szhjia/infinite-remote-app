@@ -94,7 +94,8 @@ struct WorkspaceBrand: View {
         } icon: {
             Image("BridgeBrand", bundle: .module)
                 .resizable()
-                .frame(width: 18, height: 18)
+                .scaledToFit()
+                .frame(width: 28, height: 28)
                 .accessibilityHidden(true)
         }
         .fixedSize()

@@ -125,7 +125,7 @@
     {
       "id": "ok",
       "name": {
-        "en": "Confirm",
+        "en": "OK",
         "zh": "确认"
       },
       "symbol": "circle.inset.filled",
@@ -179,7 +179,7 @@
     {
       "id": "plus",
       "name": {
-        "en": "Volume up",
+        "en": "Vol +",
         "zh": "音量加"
       },
       "symbol": "plus",
@@ -190,14 +190,12 @@
         "width": 0.235,
         "height": 0.078
       },
-      "doublePress": true,
-      "longPress": true,
       "annotationSide": "trailing"
     },
     {
       "id": "minus",
       "name": {
-        "en": "Volume down",
+        "en": "Vol −",
         "zh": "音量减"
       },
       "symbol": "minus",

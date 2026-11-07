@@ -47,8 +47,7 @@ struct RemoteSubscription: Codable, Identifiable {
     var refreshedAt: Date?
     var customName: String?
     var title: String {
-        customName ?? catalog?.name.resolve()
-            ?? (isDefault ? L10n.tr("无限遥控器资源库") : url.host ?? url.absoluteString)
+        customName ?? (isDefault ? L10n.tr("官方资源库") : catalog?.name.resolve() ?? url.host ?? url.absoluteString)
     }
     var isDefault: Bool { url == ResourceLibrary.officialURL }
 }
@@ -237,6 +236,10 @@ final class ResourceLibrary {
 
     func previewURL(_ listing: RemoteListing, source: RemoteSubscription) -> URL? {
         listing.preview.flatMap { try? Self.resolve($0, against: source.url) }
+    }
+
+    func brandLogoURL(_ listing: RemoteListing, source: RemoteSubscription) -> URL? {
+        listing.brand?.logo.flatMap { try? Self.resolve($0, against: source.url) }
     }
 
     private func persist(_ value: [RemoteSubscription]) throws {

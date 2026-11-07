@@ -4,22 +4,20 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct Workspace: View {
-    static let windowSize = NSSize(width: 1388, height: 720)
-    static let sidebarWidth: CGFloat = 200
-
     enum Page {
         case remote, library
 
         var title: String {
             switch self {
             case .remote: L10n.tr("配置工作台")
-            case .library: L10n.tr("遥控器资源库")
+            case .library: L10n.tr("资源库")
             }
         }
     }
 
     let model: RemoteModel
     let library: ResourceLibrary
+    let layout: WorkspaceLayout
     let showDiagnostics: () -> Void
     let showSettings: (AppSettingsPane?) -> Void
     @Binding var page: Page
@@ -33,9 +31,11 @@ struct Workspace: View {
 
     init(model: RemoteModel, library: ResourceLibrary, page: Binding<Page>,
          showDiagnostics: @escaping () -> Void, showSettings: @escaping (AppSettingsPane?) -> Void,
+         layout: WorkspaceLayout = .defaults,
          firstKeyToConfigure: Binding<String?> = .constant(nil)) {
         self.model = model
         self.library = library
+        self.layout = layout
         _page = page
         _firstKeyToConfigure = firstKeyToConfigure
         self.showDiagnostics = showDiagnostics
@@ -73,19 +73,23 @@ struct Workspace: View {
                              selectedModelID: model.remoteDefinition.id, blocksModelSwitch: model.hasConfigurationChanges,
                              selection: sidebarSelection, focus: $sidebarFocus, onNavigate: navigate,
                              onSelectRemote: openWorkspace, onShowSettings: { showSettings(nil) })
-                .frame(width: Self.sidebarWidth)
-            Divider().ignoresSafeArea(edges: .top)
-            if page == .library {
-                ResourceLibraryView(model: model, library: library, openWorkspace: openWorkspace)
-            } else if model.hasRemote {
-                DeviceWorkspace(model: model, guideSelection: $guideSelection, shortcutPicker: $shortcutPicker,
-                                firstKeyToConfigure: $firstKeyToConfigure,
-                                showDiagnostics: showDiagnostics, showPermissions: { showSettings(.permissions) },
-                                onSelectApp: editApp, onAddApp: chooseApp, onEditorCommand: handleEditorCommand)
-            } else {
-                emptyWorkspace
+                .frame(width: layout.sidebarWidth)
+            Divider().frame(width: WorkspaceLayout.dividerWidth).ignoresSafeArea(edges: .top)
+            VStack(spacing: 0) {
+                Divider()
+                if page == .library {
+                    ResourceLibraryView(model: model, library: library, openWorkspace: openWorkspace)
+                } else if model.hasRemote {
+                    DeviceWorkspace(model: model, layout: layout, guideSelection: $guideSelection, shortcutPicker: $shortcutPicker,
+                                    firstKeyToConfigure: $firstKeyToConfigure,
+                                    showDiagnostics: showDiagnostics, showPermissions: { showSettings(.permissions) },
+                                    onSelectApp: editApp, onAddApp: chooseApp, onEditorCommand: handleEditorCommand)
+                } else {
+                    emptyWorkspace
+                }
             }
         }
+        .frame(minWidth: layout.minimumWidth)
         .background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: .top)
         .onDisappear { model.cancelLearning() }
         .onChange(of: sidebarFocus) { _, focus in

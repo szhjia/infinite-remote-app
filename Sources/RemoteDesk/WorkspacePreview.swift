@@ -28,7 +28,7 @@ private struct WorkspacePreview: View {
             Workspace(model: fixture.model, library: fixture.library, page: $page,
                       showDiagnostics: {}, showSettings: { _ in })
                 .defaultAppStorage(fixture.defaults)
-                .frame(width: Workspace.windowSize.width, height: Workspace.windowSize.height)
+                .frame(width: WorkspaceLayout.defaults.initialSize.width, height: WorkspaceLayout.defaults.initialSize.height)
         } else {
             SetupGuide(model: fixture.model, library: fixture.library, stage: .welcome,
                        saveStage: { _ in }, deferSetup: {}, finish: {})

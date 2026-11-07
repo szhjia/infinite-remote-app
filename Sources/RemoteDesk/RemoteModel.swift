@@ -257,7 +257,8 @@ final class RemoteModel {
     var selectedAmbiguousDevices: Set<DeviceID> {
         Set(ambiguousDevices.filter { catalog.model(for: $0)?.id == remoteDefinition.id })
     }
-    var libraryDirectory: URL { storeURL.deletingLastPathComponent().appending(path: "ResourceLibrary") }
+    var dataDirectory: URL { storeURL.deletingLastPathComponent() }
+    var libraryDirectory: URL { dataDirectory.appending(path: "ResourceLibrary") }
     var resourceLoadIssues: [String] { catalog.loadIssues }
     var installedModels: [RemoteDefinition] { catalog.models }
     var hasRemote: Bool { !remoteDefinition.id.isEmpty }
@@ -275,7 +276,12 @@ final class RemoteModel {
             throw RemotePackageError.invalid(L10n.tr("请先保存或放弃当前配置更改。"))
         }
         let previousID = remoteDefinition.id
-        let definition = try catalog.install(url, sourceID: sourceID)
+        let configuredSlots = config.agents.reduce(into: [String: Set<String>]()) { slotsByModel, profile in
+            guard let modelID = profile.modelID else { return }
+            slotsByModel[modelID, default: []].formUnion(profile.actions.keys)
+        }
+        let definition = try catalog.install(url, sourceID: sourceID,
+                                             configuredSlotsByModel: storageError == nil ? configuredSlots : nil)
         cancelLearning()
         cancelDictation()
         cancelGestures()
@@ -1443,7 +1449,7 @@ extension AgentAction {
 extension VoiceProvider {
     var title: String {
         switch self {
-        case .macOS: L10n.tr("macOS 听写")
+        case .macOS: L10n.tr("macOS 内置听写")
         case .weType: L10n.tr("无操作")
         }
     }
@@ -1461,7 +1467,7 @@ extension FinderCommand {
         case .sidebar: L10n.tr("聚焦边栏")
         case .content: L10n.tr("聚焦内容")
         case .open: L10n.tr("打开所选项目")
-        case .contextMenu: L10n.tr("所选项目的右键菜单")
+        case .contextMenu: L10n.tr("弹出项目菜单")
         case .escape: "Esc"
         case .parent: L10n.tr("上一级文件夹")
         case .historyBack: L10n.tr("历史后退")

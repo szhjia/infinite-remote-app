@@ -18,12 +18,13 @@ struct RemoteDefinition {
         let front: String
         let capabilities: [Capability]
         let defaults: [String: AgentAction]
+        let retiredGestureSlots: [String]
         let behavior: RemoteBehavior
         let target: AppTarget?
         var name: String { localizedName.resolve() }
 
         private enum CodingKeys: String, CodingKey {
-            case version, id, name, release, summary, brand, devices, front, capabilities, defaults, behavior, target
+            case version, id, name, release, summary, brand, devices, front, capabilities, defaults, retiredGestureSlots, behavior, target
         }
 
         init(from decoder: any Decoder) throws {
@@ -41,6 +42,7 @@ struct RemoteDefinition {
             let declaredBehavior = try c.decodeIfPresent(RemoteBehavior.self, forKey: .behavior)
             let declaredTarget = try c.decodeIfPresent(AppTarget.self, forKey: .target)
             defaults = version == 1 ? LegacyRemoteCompatibility.defaults(id: id, declared: declaredDefaults) : declaredDefaults ?? [:]
+            retiredGestureSlots = try c.decodeIfPresent([String].self, forKey: .retiredGestureSlots) ?? []
             behavior = version == 1 ? LegacyRemoteCompatibility.behavior(id: id, declared: declaredBehavior) : declaredBehavior ?? .empty
             target = version == 1 ? LegacyRemoteCompatibility.target(id: id, declared: declaredTarget) : declaredTarget
         }
@@ -48,7 +50,7 @@ struct RemoteDefinition {
         fileprivate init() {
             version = 2; id = ""; localizedName = LocalizedText(""); release = "0.0.0"
             localizedSummary = nil; brand = nil; devices = []; front = ""; capabilities = []
-            defaults = [:]; behavior = .empty; target = nil
+            defaults = [:]; retiredGestureSlots = []; behavior = .empty; target = nil
         }
     }
 
@@ -229,6 +231,12 @@ struct RemoteDefinition {
             throw RemotePackageError.invalid(L10n.tr("机身尺寸、按键或说明锚点无效。"))
         }
         let slots = Set(layout.keys.flatMap(\.actionSlots))
+        let retired = Set(manifest.retiredGestureSlots)
+        let possibleGestures = Set(layout.keys.flatMap { [$0.doubleSlot, $0.holdSlot] })
+        guard retired.count == manifest.retiredGestureSlots.count,
+              retired.isSubset(of: possibleGestures), retired.isDisjoint(with: slots) else {
+            throw RemotePackageError.invalid(L10n.tr("停用的手势槽位无效。"))
+        }
         guard manifest.defaults.keys.allSatisfy(slots.contains), manifest.defaults.values.allSatisfy({ $0.validPackageDefault(protocolVersion: manifest.version) }),
               manifest.behavior.isValid(keys: keyIDs), layout.keys.allSatisfy({ key in
                   let variants = [manifest.defaults[key.doubleSlot], manifest.defaults[key.holdSlot]]
@@ -390,7 +398,8 @@ struct RemoteCatalog {
 
     func owner(of modelID: String) -> String? { owners[modelID] }
 
-    mutating func install(_ source: URL, sourceID: String? = nil) throws -> RemoteDefinition {
+    mutating func install(_ source: URL, sourceID: String? = nil,
+                          configuredSlotsByModel: [String: Set<String>]? = nil) throws -> RemoteDefinition {
         let owner = sourceID ?? "local"
         guard !owner.isEmpty, owner.count <= 1024 else { throw RemotePackageError.invalid(L10n.tr("资源包来源标识无效。")) }
         let files = FileManager.default
@@ -443,8 +452,17 @@ struct RemoteCatalog {
             guard try PackageVersion(candidate.manifest.release) > PackageVersion(existing.manifest.release) else {
                 throw RemotePackageError.invalid(L10n.tr("更新资源包的版本必须高于已安装版本。"))
             }
-            guard existing.actionSlots.isSubset(of: candidate.actionSlots) else {
+            let removed = existing.actionSlots.subtracting(candidate.actionSlots)
+            guard removed.isSubset(of: candidate.manifest.retiredGestureSlots) else {
                 throw RemotePackageError.invalid(L10n.tr("此更新移除了现有动作槽位。"))
+            }
+        }
+        if !candidate.manifest.retiredGestureSlots.isEmpty {
+            guard let configuredSlotsByModel else {
+                throw RemotePackageError.invalid(L10n.tr("无法核对已保存的配置，不能停用手势槽位。"))
+            }
+            guard (configuredSlotsByModel[candidate.id] ?? []).isDisjoint(with: candidate.manifest.retiredGestureSlots) else {
+                throw RemotePackageError.invalid(L10n.tr("此型号包将停用自定义配置中仍在使用的手势。请先清除对应绑定。"))
             }
         }
         let destination = directory.appending(path: candidate.id, directoryHint: .isDirectory)

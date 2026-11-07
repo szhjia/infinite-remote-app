@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macOS 界面图集 · 无限遥控器</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #111721;
+    --panel: #171f2b;
+    --line: #303b4d;
+    --muted: #aebcd0;
+    --blue: #8ab9ff;
+    --purple: #cdaeff;
+    --cyan: #62ddf1;
+    --mint: #89eac3;
+    --gold: #ffd373;
+    --pink: #ffa8cc;
+    font: 15px/1.6 system-ui, sans-serif;
+    color: #eff4ff;
+    background: var(--page);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  header, main { width: min(96%, 1600px); margin-inline: auto; padding-inline: clamp(12px, 3vw, 40px); }
+  header { padding-block: 40px 26px; }
+  h1, h2, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 44px); letter-spacing: -.03em; }
+  h2 { font-size: 24px; }
+  p { color: var(--muted); }
+  a { color: var(--blue); text-underline-offset: .22em; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+  nav, .heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 20px; }
+  nav { margin-block: 18px 12px; }
+  .toggle { display: inline-flex; gap: 7px; align-items: center; min-height: 34px; }
+  .toggle input { accent-color: var(--blue); width: 16px; height: 16px; }
+  main { padding-bottom: 50px; }
+  section { border-top: 1px solid var(--line); padding-block: 24px 35px; }
+  .heading { justify-content: space-between; margin-bottom: 4px; }
+  .panel { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; align-items: start; margin-top: 14px; }
+  .shot-scroll { overflow: auto; }
+  .shot { position: relative; width: 100%; overflow: hidden; border-radius: 9px; background: var(--panel); }
+  .shot img { display: block; width: 100%; height: auto; }
+  .overlay, .overlay svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  body:has(#show-marks:not(:checked)) .overlay { display: none; }
+  .overlay :is(rect, line, circle) { vector-effect: non-scaling-stroke; stroke: var(--mark); fill: none; }
+  .overlay rect { opacity: .66; }
+  .overlay [data-kind="member"]:has(> rect) > :is(rect, line) { stroke-dasharray: 5 3; }
+  .overlay circle { fill: var(--mark); }
+  .overlay .chosen rect { opacity: 1; stroke-width: 2; fill: color-mix(in srgb, var(--mark) 10%, transparent); }
+  .pin, .number {
+    display: grid; place-items: center; flex: none;
+    width: 24px; height: 24px; border: 1px solid var(--mark); border-radius: 50%;
+    background: var(--page); color: var(--mark); font: 700 11px/1 system-ui, sans-serif;
+  }
+  .pin {
+    position: absolute;
+    left: clamp(13px, var(--x), calc(100% - 13px));
+    top: clamp(13px, var(--y), calc(100% - 13px));
+    transform: translate(-50%, -50%); pointer-events: auto; cursor: pointer;
+  }
+  .pin.chosen, .marks button[aria-pressed="true"] .number { color: var(--page); background: var(--mark); }
+  .marks { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+  .marks button {
+    display: flex; gap: 9px; align-items: center; width: 100%; padding: 6px;
+    border: 0; border-radius: 5px; text-align: left; font: inherit; color: var(--mark);
+    background: none; cursor: pointer;
+  }
+  .marks button:hover, .marks button[aria-pressed="true"] { background: #263144; }
+  .marks code { overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
+  .marks small { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  .blue { --mark: var(--blue); } .purple { --mark: var(--purple); }
+  .cyan { --mark: var(--cyan); } .mint { --mark: var(--mint); }
+  .gold { --mark: var(--gold); } .pink { --mark: var(--pink); }
+  .scroll-note { display: none; }
+  @media (max-width: 980px) {
+    .panel { grid-template-columns: 1fr; gap: 10px; }
+    .marks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); }
+    .shot.wide { min-width: 670px; }
+    .scroll-note { display: block; font-size: 13px; }
+  }
+  @media (max-width: 560px) {
+    header { padding-top: 22px; }
+    .shot { min-width: 440px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>macOS 界面图集</h1>
+  <p>编号与视图列表一一对应。点击任一标注可高亮区域。虚线框表示属性或方法对应的区域，颜色跟随所属视图。</p>
+  <nav aria-label="界面导航">
+    <a href="#workspace">配置工作台</a>
+    <a href="#library">资源库</a>
+    <a href="#settings">应用设置</a>
+    <a href="#guide">使用引导</a>
+  </nav>
+  <label class="toggle"><input type="checkbox" id="show-marks" checked> 显示截图标注</label>
+  <p class="scroll-note">窄屏可横向滚动截图。</p>
+</header>
+<main>
+  <!-- 每条 li 是一个标注。坐标以截图左上为原点，范围 0–100。
+       data-box = 左 上 宽 高，data-at = 引线终点，data-pin = 编号位置。
+       局部控件可省略 data-box。替换截图后只需校正受影响条目的坐标。 -->
+  <section id="workspace">
+    <div class="heading"><h2>配置工作台</h2><a href="images/workspace.jpg">原始截图</a></div>
+    <p>图中正在编辑访达的配置，语音键继承 macOS 内置听写。蓝点表示另一个应用的配置当前生效。</p>
+    <div class="panel">
+      <div class="shot-scroll"><div class="shot wide">
+        <img src="images/workspace.jpg" width="2622" height="1440" alt="配置工作台。访达语音行的单击格显示 macOS 内置听写，长按格显示长按录音。确认键的双击格显示弹出项目菜单。">
+      </div></div>
+      <ol class="marks" aria-label="配置工作台视图与属性">
+        <li class="blue" data-box=".3 4.1 99.4 95.4" data-at="9 99.5" data-pin="9 95.6"><code>Workspace</code><small>工作台根视图</small></li>
+        <li class="blue" data-at="21.6 1.9" data-pin="24.2 2.1"><code>WorkspaceTitle</code><small>标题栏左侧</small></li>
+        <li class="gold" data-at="95 2" data-pin="91 2"><code>WorkspaceRemoteControls</code><small>标题栏右侧的连接状态与遥控器入口</small></li>
+        <li class="purple" data-box=".5 4.3 14.6 94.9" data-at="15.1 65" data-pin="12.9 65"><code>WorkspaceSidebar</code><small>设备与页面导航</small></li>
+        <li class="blue" data-box="15.3 4.3 84.2 94.9" data-at="26 99.2" data-pin="26 95.3"><code>DeviceWorkspace</code><small>遥控器图区与按键配置区的容器</small></li>
+        <li class="cyan" data-box="15.6 4.5 31.5 94.2" data-at="15.6 12.3" data-pin="18 12.3"><code>DeviceStage</code><small>侧栏右边的遥控器图区</small></li>
+        <li class="mint" data-box="15.7 17.1 31.2 65" data-at="35 82.1" data-pin="35 85.7"><code>DeviceArtworkGuide</code><small>机身和按键引线，位于 DeviceStage 内</small></li>
+        <li class="cyan" data-kind="member" data-box="26.5 89 9.6 3.2" data-at="36.1 90.6" data-pin="40 90.6"><code>usesRemoteMicrophone</code><small>设备区的机身麦克风开关，设备支持时显示。</small></li>
+        <li class="blue" data-kind="member" data-box="47.4 4.5 51.8 94.2" data-at="67 98.7" data-pin="67 94.7"><code>appMapping</code><small>DeviceWorkspace 的配置区，应用列表和按键编辑器共用背景。</small></li>
+        <li class="gold" data-box="47.6 4.7 6.4 93.7" data-at="50.8 30.5" data-pin="50.8 34.5"><code>AppRail</code><small>加号及其虚线框占用与应用图标相同的 36 pt 方形区域。文字在下方，整项的悬停背景为 64 pt。</small></li>
+        <li class="gold" data-kind="member" data-at="52.5 16.1" data-pin="53.4 22"><code>activeBundleID</code><small>生效应用对应的蓝点，独立于编辑选中状态</small></li>
+        <li class="pink" data-box="54.3 4.7 44.6 93.7" data-at="98.9 75" data-pin="96.1 75"><code>KeyMappingEditor</code><small>当前应用的按键配置。同列图标居中、文字左对齐；横杠与文字对齐，图标位留空。</small></li>
+        <li class="pink" data-kind="member" data-box="62.7 20.2 11.6 4.3" data-at="74.3 22.3" data-pin="77 22.3"><code>editableMappingControl</code><small>语音键的配置菜单在单击格；支持按住录音时，长按格显示灰色提示。</small></li>
+        <li class="pink" data-kind="member" data-box="54.6 94.4 44 3.7" data-at="83 94.4" data-pin="83 90.7"><code>mappingFooter</code><small>按键编辑器底部的配置与保存操作</small></li>
+      </ol>
+    </div>
+  </section>
+  <section id="library">
+    <div class="heading"><h2>资源库</h2><a href="images/remote-library.jpg">原始截图</a></div>
+    <p><code>WorkspaceSidebar</code> 与 <code>ResourceLibraryView</code> 并排。</p>
+    <div class="panel">
+      <div class="shot-scroll"><div class="shot wide">
+        <img src="images/remote-library.jpg" width="2622" height="1440" alt="资源库。型号卡片左侧显示遥控器，右侧显示型号和介绍，底部显示安装状态和操作。">
+      </div></div>
+      <ol class="marks" aria-label="资源库视图与属性">
+        <li class="blue" data-box=".3 4.1 99.4 95.4" data-at="54 99.5" data-pin="54 94"><code>Workspace</code><small>资源库仍在同一个工作台窗口</small></li>
+        <li class="blue" data-at="19.6 2" data-pin="22 2.1"><code>WorkspaceTitle</code><small>标题栏与配置工作台共用下方的分割线。</small></li>
+        <li class="gold" data-at="97.8 2" data-pin="95 2"><code>WorkspaceRemoteControls</code><small>标题栏右侧的遥控器入口</small></li>
+        <li class="purple" data-box=".6 4.5 14.2 94.4" data-at="14.8 65" data-pin="12.5 65"><code>WorkspaceSidebar</code><small>侧栏当前选中资源库</small></li>
+        <li class="cyan" data-box="15.5 4.5 83.7 94.4" data-at="99.2 23" data-pin="96 23"><code>ResourceLibraryView</code><small>搜索工具栏下方直接显示型号卡片。</small></li>
+        <li class="cyan" data-kind="member" data-box="16.8 6.8 38.9 4.6" data-at="55.7 9.1" data-pin="58.7 9.1"><code>libraryActions</code><small>搜索、导入 ZIP 与刷新订阅源。刷新时，进度指示器显示在按钮右侧。</small></li>
+        <li class="cyan" data-kind="member" data-box="16.8 7.3 20.6 3.4" data-at="35 10.7" data-pin="35 14"><code>searchField</code><small>属于 libraryActions</small></li>
+        <li class="cyan" data-box="16.8 13.1 26.3 22.2" data-at="43.1 32.3" data-pin="46.5 32.3"><code>ResourceCard</code><small>固定 344 × 160 pt。标题和遥控器预览共用上沿，版本号在右上角，底部放状态和操作。</small></li>
+        <li class="mint" data-box="18 14.4 4 13.4" data-at="20 27.8" data-pin="20 38.8"><code>CatalogPreview</code><small>型号卡片左侧的遥控器预览，沿固定预览区的顶部对齐。</small></li>
+      </ol>
+    </div>
+  </section>
+  <section id="settings">
+    <div class="heading"><h2>应用设置</h2><a href="images/app-settings.jpg">原始截图</a></div>
+    <p>图中是「权限与引导」。顶部也可切换到「订阅源」和「多媒体」。</p>
+    <div class="panel">
+      <div class="shot-scroll"><div class="shot">
+        <img src="images/app-settings.jpg" width="1200" height="876" alt="应用设置的权限与引导页">
+      </div></div>
+      <ol class="marks" aria-label="应用设置视图与属性">
+        <li class="pink" data-box=".5 6.8 99 92.4" data-at="99.5 10" data-pin="96 10"><code>AppSettingsView</code><small>设置窗口的 SwiftUI 内容</small></li>
+        <li class="pink" data-kind="member" data-box="30.5 9.4 39 5.4" data-at="69.5 12" data-pin="75 12"><code>Picker · $pane</code><small>选项卡绑定</small></li>
+        <li class="pink" data-kind="member" data-box="2.7 21.7 94.6 35.9" data-at="97.3 53" data-pin="92 53"><code>permissionsPane</code><small>权限状态与重开引导入口</small></li>
+        <li class="pink" data-at="25.7 51.2" data-pin="34 51.2"><code>showSetup()</code><small>重开引导按钮调用的回调</small></li>
+      </ol>
+    </div>
+  </section>
+  <section id="guide">
+    <div class="heading"><h2>遥控器使用引导</h2><a href="images/setup-guide.jpg">原始截图</a></div>
+    <p>欢迎步骤使用 <code>SetupBanner</code>，底部操作由 <code>SetupGuide</code> 统一提供。</p>
+    <div class="panel">
+      <div class="shot-scroll"><div class="shot">
+        <img src="images/setup-guide.jpg" width="1380" height="1116" alt="遥控器使用引导的欢迎步骤">
+      </div></div>
+      <ol class="marks" aria-label="使用引导视图与属性">
+        <li class="blue" data-box=".5 5.4 99 93.9" data-at="99.5 6.5" data-pin="96 7.5"><code>SetupGuide</code><small>引导窗口的 SwiftUI 内容</small></li>
+        <li class="blue" data-at="16.5 11" data-pin="22 11"><code>stage.title</code><small>当前引导步骤的标题</small></li>
+        <li class="blue" data-at="92 11" data-pin="87 11"><code>stage.position</code><small>用于计算当前步骤进度</small></li>
+        <li class="cyan" data-box="3.5 14.7 93 74" data-at="96.5 20" data-pin="93 20"><code>SetupBanner</code><small>欢迎轮播与分页控件</small></li>
+        <li class="cyan" data-kind="member" data-box="4 15.6 92 65.3" data-at="96 49" data-pin="92 49"><code>slide(_:index:)</code><small>生成当前轮播画面</small></li>
+        <li class="cyan" data-at="42.8 85.5" data-pin="43 82.5"><code>current</code><small>决定高亮的分页圆点</small></li>
+        <li class="cyan" data-at="65.8 85.5" data-pin="71 85.5"><code>arrow(_:title:destination:)</code><small>生成轮播的前后按钮</small></li>
+        <li class="blue" data-kind="member" data-box="1 90.8 98 8.3" data-at="49 90.8" data-pin="49 95"><code>footer</code><small>与 SetupBanner 并列的操作区</small></li>
+        <li class="blue" data-at="86 95.5" data-pin="80 95.5"><code>primaryTitle</code><small>主按钮文字</small></li>
+      </ol>
+    </div>
+  </section>
+  <p><a href="images/workspace-layout.png">旧版配置工作台标注图</a></p>
+</main>
+<script>
+  const svgNamespace = 'http://www.w3.org/2000/svg';
+  const coordinates = value => value.split(' ').map(Number);
+  function svgElement(name, attributes = {}) {
+    const node = document.createElementNS(svgNamespace, name);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+    return node;
+  }
+
+  for (const section of document.querySelectorAll('main section')) {
+    const scroller = section.querySelector('.shot-scroll');
+    const shot = scroller.querySelector('.shot');
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay';
+    const svg = svgElement('svg', { viewBox: '0 0 100 100', preserveAspectRatio: 'none', 'aria-hidden': 'true' });
+    overlay.append(svg);
+    shot.append(overlay);
+    let chosen;
+
+    for (const [index, item] of [...section.querySelectorAll('.marks li')].entries()) {
+      const number = index + 1;
+      const [x, y] = coordinates(item.dataset.at);
+      const [pinX, pinY] = coordinates(item.dataset.pin);
+      const group = svgElement('g', { class: item.className, 'data-kind': item.dataset.kind || 'view' });
+      if (item.dataset.box) {
+        const [left, top, width, height] = coordinates(item.dataset.box);
+        group.append(svgElement('rect', { x: left, y: top, width, height, rx: .35 }));
+      }
+      group.append(svgElement('line', { x1: x, y1: y, x2: pinX, y2: pinY }),
+                   svgElement('circle', { cx: x, cy: y, r: .18 }));
+      svg.append(group);
+
+      const pin = document.createElement('button');
+      pin.type = 'button';
+      pin.className = `pin ${item.className}`;
+      pin.tabIndex = -1;
+      pin.textContent = number;
+      pin.setAttribute('aria-label', item.querySelector('code').textContent);
+      pin.setAttribute('aria-pressed', 'false');
+      pin.style.setProperty('--x', `${pinX}%`);
+      pin.style.setProperty('--y', `${pinY}%`);
+      overlay.append(pin);
+
+      const key = document.createElement('button');
+      key.type = 'button';
+      key.setAttribute('aria-pressed', 'false');
+      const badge = document.createElement('span');
+      badge.className = 'number';
+      badge.textContent = number;
+      const caption = document.createElement('span');
+      caption.append(...item.childNodes);
+      key.append(badge, caption);
+      item.append(key);
+
+      function setChosen(on) {
+        group.classList.toggle('chosen', on);
+        pin.classList.toggle('chosen', on);
+        pin.setAttribute('aria-pressed', on);
+        key.setAttribute('aria-pressed', on);
+      }
+      function select() {
+        if (chosen === setChosen) {
+          setChosen(false);
+          chosen = undefined;
+          return;
+        }
+        chosen?.(false);
+        setChosen(true);
+        chosen = setChosen;
+        const position = pinX * shot.clientWidth / 100;
+        if (position < scroller.scrollLeft + 16 || position > scroller.scrollLeft + scroller.clientWidth - 16) {
+          scroller.scrollLeft = position - scroller.clientWidth / 2;
+        }
+      }
+      key.addEventListener('click', select);
+      pin.addEventListener('click', select);
+    }
+  }
+</script>
+</body>
+</html>

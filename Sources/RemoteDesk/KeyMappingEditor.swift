@@ -1,3 +1,4 @@
+import AppKit
 import RemoteCore
 import SwiftUI
 
@@ -29,12 +30,29 @@ struct KeyMappingEditor: View {
 
     private let accent = Color.accentColor
     private let mappingFont = Font.system(size: 13)
+    private static let mappingIcons = NSCache<NSString, NSImage>()
+    private let iconWidth: CGFloat = 18
+    private let iconSpacing: CGFloat = 5
+    // The borderless macOS menu adds a small inset to its label.
+    private let actionLeadingInset: CGFloat = 2
+    private var textOffset: CGFloat { iconWidth + iconSpacing }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(model.editingApp.displayName) · \(L10n.tr("按键配置"))").font(.callout.weight(.semibold))
+                    HStack(spacing: 6) {
+                        Group {
+                            if !chatGPTIsMissing, let url = AgentRunner.appURL(model.editingApp) {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().scaledToFit()
+                            } else {
+                                Image(systemName: "app.dashed").foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(width: 18, height: 18)
+                        .accessibilityHidden(true)
+                        Text(model.editingApp.displayName).font(.callout.weight(.semibold)).lineLimit(1)
+                    }
                     if let profile = model.profile {
                         Text(profile.id == AgentProfile.defaults.id ? L10n.format("%@ · 编辑后另存", profile.name) : profile.name)
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -47,9 +65,13 @@ struct KeyMappingEditor: View {
             .padding(.vertical, 9)
             Divider()
             HStack(spacing: 8) {
-                Text(L10n.tr("按键名")).frame(width: 89, alignment: .leading)
+                Text(L10n.tr("按键名"))
+                    .padding(.leading, textOffset)
+                    .frame(width: 89, alignment: .leading)
                 ForEach([L10n.tr("单击"), L10n.tr("双击"), L10n.tr("长按")], id: \.self) { title in
-                    Text(title).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(title)
+                        .padding(.leading, actionLeadingInset + textOffset)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .font(.caption.weight(.medium))
@@ -93,16 +115,19 @@ struct KeyMappingEditor: View {
             mappingFooter
         }
         .frame(maxHeight: .infinity)
-        .background(Color(nsColor: .controlBackgroundColor), ignoresSafeAreaEdges: .top)
     }
 
     private func row(_ key: RemoteKey) -> some View {
         let selected = model.slot == key.id
         let phase = model.hardwarePress.flatMap { $0.key == key.id ? $0.phase : nil }
+        let voiceAction = key.id == "voice" ? model.editableActions[key.id] ?? model.defaultVoice : nil
         return HStack(spacing: 8) {
             HStack(spacing: 4) {
                 Button { onLocateKey(key.id) } label: {
-                    Label(key.name, systemImage: key.symbol)
+                    HStack(spacing: iconSpacing) {
+                        mappingIcon(key.symbol)
+                        Text(key.name)
+                    }
                         .font(mappingFont.weight(selected ? .semibold : .regular))
                         .lineLimit(1)
                         .foregroundStyle(selected ? accent : .primary)
@@ -124,9 +149,19 @@ struct KeyMappingEditor: View {
                 }
             }
             .frame(width: 89)
-            mappingControl(key, slot: key.id, gesture: L10n.tr("单击"))
-            gestureCell(key, slot: key.doubleSlot, gesture: L10n.tr("双击"), supported: key.doublePress == true)
-            gestureCell(key, slot: key.holdSlot, gesture: L10n.tr("长按"), supported: key.longPress == true)
+            if key.id == "voice", key.actionSlots.count == 1 || voiceAction?.isVoiceTrigger == true {
+                editableMappingControl(key, slot: key.id, gesture: nil)
+            } else {
+                mappingControl(key, slot: key.id, gesture: L10n.tr("单击"))
+            }
+            gestureCell(key, slot: key.doubleSlot, gesture: L10n.tr("双击"),
+                        supported: key.doublePress == true && voiceAction?.isVoiceTrigger != true)
+            if let voiceAction, showsHoldToRecord(voiceAction) {
+                holdToRecordCell(voiceAction)
+            } else {
+                gestureCell(key, slot: key.holdSlot, gesture: L10n.tr("长按"),
+                            supported: key.longPress == true && voiceAction?.isVoiceTrigger != true)
+            }
         }
         .padding(.horizontal, 2)
         .frame(height: 31)
@@ -166,58 +201,123 @@ struct KeyMappingEditor: View {
 
     @ViewBuilder
     private func gestureCell(_ key: RemoteKey, slot: String, gesture: String, supported: Bool) -> some View {
-        if supported {
+        if supported, model.editableActions[key.id]?.isVoiceTrigger != true {
             mappingControl(key, slot: slot, gesture: gesture)
-                .disabled(model.editableActions[key.id] == .dictation)
         } else {
-            Text(L10n.tr("不支持"))
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(L10n.format("%@ · %@ · 不支持", key.name, gesture))
+            unavailableGestureCell(L10n.format("%@ · %@ · 不支持", key.name, gesture))
         }
+    }
+
+    private func unavailableGestureCell(_ accessibilityLabel: String) -> some View {
+        Text("—")
+            .font(mappingFont)
+            .foregroundStyle(.secondary)
+            .padding(.leading, actionLeadingInset + textOffset)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func mappingIcon(_ symbol: String) -> Image {
+        let key = symbol as NSString
+        if let cached = Self.mappingIcons.object(forKey: key) { return Image(nsImage: cached) }
+        guard let source = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) else {
+            return Image(systemName: symbol)
+        }
+        let size = NSSize(width: iconWidth, height: iconWidth)
+        let scale = min(1, size.width / source.size.width, size.height / source.size.height)
+        let width = source.size.width * scale
+        let height = source.size.height * scale
+        let icon = NSImage(size: size, flipped: false) { bounds in
+            source.draw(in: NSRect(x: bounds.midX - width / 2, y: bounds.midY - height / 2,
+                                   width: width, height: height))
+            return true
+        }
+        icon.isTemplate = true
+        Self.mappingIcons.setObject(icon, forKey: key)
+        return Image(nsImage: icon)
+    }
+
+    private func showsHoldToRecord(_ action: AgentAction) -> Bool {
+        switch action {
+        case .voiceShortcut(.macOS, _): model.supportsRemoteMicrophone
+        case .chatGPTDraft, .dictation: !unavailableChatGPTVoice(action)
+        default: false
+        }
+    }
+
+    private func holdToRecordCell(_ action: AgentAction) -> some View {
+        let title = L10n.tr("长按录音")
+        let hint = if case .voiceShortcut(.macOS, _) = action, !model.usesRemoteMicrophone {
+            L10n.tr("启用遥控器麦克风后可长按录音。")
+        } else {
+            ""
+        }
+        return Text(title)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.leading, actionLeadingInset + textOffset)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(hint.isEmpty ? title : hint)
+            .accessibilityHint(hint)
     }
 
     @ViewBuilder
     private func mappingControl(_ key: RemoteKey, slot: String, gesture: String) -> some View {
         if model.isGlobalSlot(slot) {
-            HStack(spacing: 5) {
-                if slot == key.id, let action = model.editableActions[slot] {
-                    Label(compactActionLabel(action), systemImage: action.mappingSymbol).lineLimit(1)
+            if slot == key.id, let action = model.editableActions[slot] {
+                HStack(spacing: iconSpacing) {
+                    mappingIcon(action.mappingSymbol)
+                    Text(compactActionLabel(action)).lineLimit(1)
                     Text(L10n.tr("全局")).font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    Text("—").foregroundStyle(.secondary)
                 }
+                .font(mappingFont)
+                .padding(.leading, actionLeadingInset)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+            } else {
+                unavailableGestureCell(L10n.format("%@ · %@ · 全局动作不可编辑", key.name, gesture))
             }
-            .font(mappingFont)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
         } else {
             editableMappingControl(key, slot: slot, gesture: gesture)
         }
     }
 
-    private func editableMappingControl(_ key: RemoteKey, slot: String, gesture: String) -> some View {
+    @ViewBuilder
+    private func editableMappingControl(_ key: RemoteKey, slot: String, gesture: String?) -> some View {
         let action = model.editableActions[slot]
-        let inheritedVoice = slot == "voice" && action == nil ? model.defaultVoice : nil
-        let label = unavailableChatGPTVoice(action) ? L10n.tr("未安装") : inheritedVoice.map { L10n.format("通用 · %@", $0.title) }
-            ?? action.map(compactActionLabel) ?? L10n.tr("无操作")
+        let isVoiceSlot = slot == "voice"
+        let effectiveAction = action ?? (isVoiceSlot ? model.defaultVoice : nil)
+        let missing = unavailableChatGPTVoice(effectiveAction)
+        let label = missing ? L10n.tr("未安装") : effectiveAction.map(compactActionLabel) ?? L10n.tr("无操作")
+        let accessibilityLabel = gesture.map { L10n.format("%@%@的功能", key.name, $0) } ?? L10n.tr("语音键功能")
         let nativeNote = slot == key.id || model.capturesKeyboard ? "" : L10n.tr("。macOS 仍可能响应实体键的原生操作。")
-        return Menu {
-            actionItem(nil, for: key, slot: slot)
+        Menu {
+            if isVoiceSlot, let defaultVoice = model.defaultVoice {
+                actionItem(nil, for: key, slot: slot, title: L10n.tr("使用默认语音"), symbol: defaultVoice.mappingSymbol)
+            } else {
+                actionItem(nil, for: key, slot: slot)
+            }
+            if isVoiceSlot {
+                Section(L10n.tr("语音入口")) {
+                    if model.editingApp.bundleID == AppTarget.chatGPT.bundleID && !chatGPTIsMissing {
+                        actionItem(.chatGPTDraft, for: key, slot: slot)
+                    }
+                    Button(VoiceProvider.macOS.title + "…") { onCommand(.recordShortcut(slot: slot, provider: .macOS)) }
+                }
+                Section(L10n.tr("默认语音")) {
+                    Button(L10n.tr("设置默认听写…")) { onCommand(.recordShortcut(slot: nil, provider: .macOS)) }
+                    Button(L10n.tr("清除默认语音")) { model.setDefaultVoice(nil) }
+                        .disabled(model.defaultVoice == nil)
+                }
+            }
             Section(L10n.tr("应用快捷键")) {
                 Button(L10n.tr("录入应用快捷键…")) { onCommand(.recordShortcut(slot: slot, provider: nil)) }
                 if model.editingApp.bundleID == AppTarget.chatGPT.bundleID {
                     actionItem(.shortcut(AgentProfile.newChat), for: key, slot: slot)
                     actionItem(.shortcut(AgentProfile.sendDraft), for: key, slot: slot)
                     actionItem(.shortcut(AgentProfile.stop), for: key, slot: slot)
-                }
-            }
-            if key.id == "voice" && slot == key.id {
-                Section(L10n.tr("语音入口")) {
-                    if model.editingApp.bundleID == AppTarget.chatGPT.bundleID && !chatGPTIsMissing {
-                        actionItem(.chatGPTDraft, for: key, slot: slot)
-                    }
-                    Button(VoiceProvider.macOS.title + "…") { onCommand(.recordShortcut(slot: slot, provider: .macOS)) }
                 }
             }
             if model.editingApp.bundleID == AppTarget.finder.bundleID {
@@ -247,25 +347,31 @@ struct KeyMappingEditor: View {
                 }
             }
         } label: {
-            Label(label, systemImage: (action ?? inheritedVoice)?.mappingSymbol ?? "minus.circle")
+            Label {
+                Text(label)
+            } icon: {
+                mappingIcon(effectiveAction?.mappingSymbol ?? "minus.circle")
+            }
                 .lineLimit(1)
                 .font(mappingFont)
-                .foregroundStyle(action == nil ? .secondary : .primary)
+                .foregroundStyle(effectiveAction == nil || missing ? .secondary : .primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
         .focused($mappingFocus, equals: slot)
         .menuIndicator(.visible)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(L10n.format("%@%@的功能", String(describing: key.name), String(describing: gesture)))
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(label)
-        .help(((action ?? inheritedVoice)?.detail ?? label) + nativeNote)
+        .help((missing ? label : effectiveAction?.detail ?? label) + nativeNote)
     }
 
-    private func actionItem(_ action: AgentAction?, for key: RemoteKey, slot: String) -> some View {
+    private func actionItem(_ action: AgentAction?, for key: RemoteKey, slot: String,
+                            title: String? = nil, symbol: String? = nil) -> some View {
         Toggle(isOn: Binding(get: { action == model.editableActions[slot] },
                              set: { _ in choose(action, for: key, slot: slot) })) {
-            Label(action.map(actionLabel) ?? L10n.tr("无操作"), systemImage: action?.mappingSymbol ?? "minus.circle")
+            Label(title ?? action.map(actionLabel) ?? L10n.tr("无操作"),
+                  systemImage: symbol ?? action?.mappingSymbol ?? "minus.circle")
         }
     }
 
@@ -326,23 +432,6 @@ struct KeyMappingEditor: View {
             WorkspacePopoverAction(L10n.tr("导入配置…")) {
                 showConfigActions = false
                 onCommand(.importProfile)
-            }
-            Menu(L10n.tr("通用语音入口")) {
-                Button(VoiceProvider.macOS.title + "…") {
-                    showConfigActions = false
-                    onCommand(.recordShortcut(slot: nil, provider: .macOS))
-                }
-                Button(L10n.tr("清除通用语音入口")) { model.setDefaultVoice(nil) }
-                    .disabled(model.defaultVoice == nil)
-            }
-            .padding(.horizontal, 7)
-            if model.supportsRemoteMicrophone {
-                WorkspacePopoverAction(L10n.tr(model.usesRemoteMicrophone ? "停用遥控器麦克风" : "启用遥控器麦克风")) {
-                    model.toggleRemoteMicrophone()
-                }
-                if let status = model.remoteMicrophone.status {
-                    Text(status).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 7)
-                }
             }
             if !model.unassignedProfiles.isEmpty {
                 Menu(L10n.tr("将旧配置分配给此应用")) {
