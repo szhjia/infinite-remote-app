@@ -6,9 +6,9 @@ Control macOS and your selected applications with independently installed remote
 
 The GitHub repository is `szhjia/infinite-remote-app`.
 
-## Release v0.0.2
+## Release v0.0.3
 
-Download the DMG from [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.2), open it, and drag Infinite Remote to Applications. The published build requires an Apple silicon Mac with macOS 14 or later. See the [release notes](RELEASE_NOTES.md) for signing details. To build a ZIP archive, run `./scripts/package-release.sh`.
+Download the DMG from [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.3), open it, and drag Infinite Remote to Applications. The published build requires an Apple silicon Mac with macOS 14 or later. See the [release notes](RELEASE_NOTES.md) for signing details. To build a ZIP archive, run `./scripts/package-release.sh`.
 
 ## Usage
 

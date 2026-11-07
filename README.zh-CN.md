@@ -6,9 +6,9 @@
 
 GitHub 仓库为 `szhjia/infinite-remote-app`。
 
-## v0.0.2 版本
+## v0.0.3 版本
 
-从 [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.2) 下载 DMG，打开后把无限遥控器拖进「应用程序」。安装包适用于运行 macOS 14 或更高版本的 Apple 芯片 Mac。签名详见[发布说明](RELEASE_NOTES.md)。运行 `./scripts/package-release.sh` 可生成 ZIP 归档。
+从 [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.3) 下载 DMG，打开后把无限遥控器拖进「应用程序」。安装包适用于运行 macOS 14 或更高版本的 Apple 芯片 Mac。签名详见[发布说明](RELEASE_NOTES.md)。运行 `./scripts/package-release.sh` 可生成 ZIP 归档。
 
 ## 使用
 
