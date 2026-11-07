@@ -11,6 +11,7 @@ struct SetupGuide: View {
     let deferSetup: () -> Void
     let finish: () -> Void
     @State private var stage: SetupStage
+    @State private var waitsForRemoteOnResume: Bool
     @AccessibilityFocusState private var headingFocused: Bool
 
     init(model: RemoteModel, library: ResourceLibrary, stage: SetupStage,
@@ -23,7 +24,12 @@ struct SetupGuide: View {
         self.saveStage = saveStage
         self.deferSetup = deferSetup
         self.finish = finish
-        _stage = State(initialValue: stage.restored(hasModel: model.hasRemote, readiness: SetupReadiness(model: model)))
+        let readiness = SetupReadiness(model: model)
+        let restored = stage.restored(hasModel: model.hasRemote, readiness: readiness)
+        _stage = State(initialValue: restored)
+        // The Bluetooth device may appear after the guide is restored.
+        _waitsForRemoteOnResume = State(initialValue: restored == .permissions
+            && readiness.hasPermissions && readiness.canPostShortcuts)
     }
 
     private var readiness: SetupReadiness { SetupReadiness(model: model) }
@@ -59,9 +65,17 @@ struct SetupGuide: View {
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         .background(Color(nsColor: .windowBackgroundColor))
         .focusEffectDisabled(!showsKeyboardFocus())
-        .onChange(of: stage) { _, value in
+        .onChange(of: readiness.canFinish, initial: true) { _, canFinish in
+            if waitsForRemoteOnResume && stage == .permissions && canFinish {
+                stage = .ready
+            }
+        }
+        .onChange(of: stage, initial: true) { previous, value in
             saveStage(value)
-            headingFocused = true
+            if previous != value {
+                waitsForRemoteOnResume = false
+                headingFocused = true
+            }
         }
     }
 
@@ -111,6 +125,12 @@ struct SetupGuide: View {
                 permissionRow(.inputMonitoring)
             }
             .background(.background, in: RoundedRectangle(cornerRadius: 12))
+            if model.shortcutsNeedRestart {
+                Label(L10n.tr("请退出并重新打开无限遥控器，以启用快捷键。"), systemImage: "arrow.clockwise")
+                    .foregroundStyle(.secondary)
+                Text(L10n.tr("重新打开后会回到这一步。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if !readiness.connected {
                 Label(L10n.tr("正在等待遥控器连接。若未连上，可返回上一步检查蓝牙。"), systemImage: "antenna.radiowaves.left.and.right")
                     .foregroundStyle(.secondary)
@@ -126,7 +146,8 @@ struct SetupGuide: View {
     }
 
     private func permissionRow(_ kind: PermissionKind) -> some View {
-        let granted = kind.granted(in: model)
+        let status = kind.status(in: model)
+        let canRequest = kind == .accessibility || readiness.needsSeparateInputAuthorization
         return HStack(spacing: 12) {
             Image(systemName: kind.symbol)
                 .font(.title3)
@@ -137,23 +158,26 @@ struct SetupGuide: View {
                 Text(kind.title).font(.headline)
                 Text(kind.explanation).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if kind == .inputMonitoring && !granted {
+                if kind == .inputMonitoring && canRequest {
                     Text(L10n.tr("macOS 可能要求重新打开应用。重新打开后会回到这一步。"))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 10)
-            if granted {
-                Label(L10n.tr("已授权"), systemImage: "checkmark.circle.fill")
+            if status.isAvailable {
+                Label(status.title, systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-            } else {
+            } else if canRequest {
                 Button(L10n.tr("授权…")) {
                     saveStage(.permissions)
                     kind.request(in: model)
                 }
                     .accessibilityLabel(L10n.format("授予%@权限", kind.title))
                     .accessibilityHint(L10n.tr("尚未授权"))
+            } else {
+                Text(L10n.tr("先开启辅助功能"))
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(16)

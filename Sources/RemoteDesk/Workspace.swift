@@ -102,6 +102,12 @@ struct Workspace: View {
         }
         .background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: .top)
         .onDisappear { model.cancelLearning() }
+        .onChange(of: sidebarFocus) { _, focus in
+            // Let the workbench open with window-level focus instead of a highlighted row.
+            guard focus != nil,
+                  Self.focusWasAssignedAutomatically(currentEventType: NSApp.currentEvent?.type) else { return }
+            sidebarFocus = nil
+        }
         .onChange(of: model.remoteDefinition.id) { _, _ in guideSelection = nil }
         .onChange(of: model.requestedPermission) { _, permission in
             if let permission, sheet == nil { sheet = .permission(permission) }
@@ -203,6 +209,22 @@ struct Workspace: View {
         }
     }
 
+    /// SwiftUI gives the first focusable control the window's initial focus when the workbench
+    /// becomes key. That assignment arrives while an AppKit-defined event is handled, unlike a
+    /// user's Tab, arrow, or pointer action, so only focus changes outside those events are
+    /// treated as the automatic initial focus that must not draw a focus ring on open.
+    static func focusWasAssignedAutomatically(currentEventType: NSEvent.EventType?) -> Bool {
+        guard let currentEventType else { return true }
+        switch currentEventType {
+        case .keyDown, .keyUp, .flagsChanged,
+             .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+             .otherMouseDown, .otherMouseUp, .scrollWheel:
+            return false
+        default:
+            return true
+        }
+    }
+
     private func openWorkspace(_ id: String) {
         if model.remoteDefinition.id != id { model.previewModel(id) }
         if model.remoteDefinition.id == id { navigate(to: .remote) }
@@ -225,15 +247,16 @@ struct Workspace: View {
                 Text(model.remoteDefinition.manifest.name).font(.title2.bold())
                     .accessibilityAddTraits(.isHeader)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) {
-                    if model.readiness != .needsInputMonitoring {
+                if model.readiness != .needsInputMonitoring {
+                    HStack(spacing: 10) {
                         Label(model.connectionStatus, systemImage: model.canReadKeys ? "waveform" : "exclamationmark.circle")
                             .font(.callout.weight(.medium))
+                        readinessAction
+                        Spacer()
                     }
-                    readinessAction
-                    Spacer()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
             Divider()
@@ -253,9 +276,6 @@ struct Workspace: View {
             Button(L10n.tr("打开蓝牙设置")) { model.openBluetooth() }
         case .chooseDevice:
             devicePicker
-        case .needsInputMonitoring:
-            Button(L10n.tr("设置权限")) { showSettings(.permissions) }
-                .buttonStyle(.borderedProminent)
         case .monitorUnavailable:
             Button(L10n.tr("重试监听")) { model.refreshPermissions() }
         case .listening, .paused:
@@ -266,7 +286,7 @@ struct Workspace: View {
             Button(L10n.tr("查看诊断…"), action: showDiagnostics)
         case .calibrating:
             Button(L10n.tr("取消校准")) { model.cancelLearning() }
-        case .noModel:
+        case .noModel, .needsInputMonitoring:
             EmptyView()
         }
     }
@@ -282,8 +302,14 @@ struct Workspace: View {
 
     private var deviceStage: some View {
         VStack(spacing: 12) {
-            Text(L10n.tr("遥控器")).font(.callout.weight(.semibold))
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack {
+                Text(L10n.tr("遥控器")).font(.callout.weight(.semibold))
+                Spacer()
+                if model.readiness == .needsInputMonitoring {
+                    Button(L10n.tr("设置权限")) { showSettings(.permissions) }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
             Spacer(minLength: 0)
             DeviceArtworkGuide(model: model, selection: $guideSelection, locateKey: locateKey)
                 .frame(maxHeight: 475)

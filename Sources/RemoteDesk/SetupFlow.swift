@@ -4,6 +4,20 @@ import SwiftUI
 
 enum PermissionKind: String, Identifiable {
     case inputMonitoring, accessibility
+
+    enum Status {
+        case notAllowed, allowed, coveredByAccessibility
+
+        var isAvailable: Bool { self != .notAllowed }
+        var title: String {
+            switch self {
+            case .notAllowed: L10n.tr("尚未授权")
+            case .allowed: L10n.tr("已授权")
+            case .coveredByAccessibility: L10n.tr("可读取")
+            }
+        }
+    }
+
     var id: String { rawValue }
     var title: String { L10n.tr(self == .inputMonitoring ? "输入监控" : "辅助功能") }
     var symbol: String { self == .inputMonitoring ? "keyboard" : "accessibility" }
@@ -12,11 +26,17 @@ enum PermissionKind: String, Identifiable {
             ? "允许无限遥控器读取你选择的遥控器按键。"
             : "允许无限遥控器模拟快捷键，并操作你选择的应用。")
     }
-    @MainActor func granted(in model: RemoteModel) -> Bool {
-        self == .inputMonitoring ? model.canListen : model.canPost && model.canUseAccessibility
+    @MainActor func status(in model: RemoteModel) -> Status {
+        switch self {
+        case .accessibility:
+            return model.canUseAccessibility ? .allowed : .notAllowed
+        case .inputMonitoring:
+            guard model.canListen else { return .notAllowed }
+            return model.canUseAccessibility ? .coveredByAccessibility : .allowed
+        }
     }
     @MainActor func request(in model: RemoteModel) {
-        if self == .inputMonitoring { model.requestListen() } else { model.requestPost() }
+        if self == .inputMonitoring { model.requestListen() } else { model.requestAccessibility() }
     }
 }
 
@@ -26,6 +46,7 @@ struct PermissionStepView: View {
     var dismiss: (() -> Void)?
 
     var body: some View {
+        let status = kind.status(in: model)
         VStack(spacing: 20) {
             Image(systemName: kind.symbol)
                 .font(.system(size: 38, weight: .light))
@@ -34,19 +55,22 @@ struct PermissionStepView: View {
             Text(kind.title).font(.title2.bold())
             Text(kind.explanation).multilineTextAlignment(.center)
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Label(L10n.tr(kind.granted(in: model) ? "已授权" : "尚未授权"),
-                  systemImage: kind.granted(in: model) ? "checkmark.circle.fill" : "circle.dashed")
-                .foregroundStyle(kind.granted(in: model) ? Color.green : Color.secondary)
-            if !kind.granted(in: model) {
+            Label(status.title, systemImage: status.isAvailable ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(status.isAvailable ? Color.green : Color.secondary)
+            if !status.isAvailable {
                 Button(L10n.tr("打开系统设置")) { kind.request(in: model) }
                     .buttonStyle(.borderedProminent)
                 Text(L10n.tr("在系统设置中开启权限，然后返回此处检查。"))
                     .font(.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+            } else if kind == .accessibility && model.shortcutsNeedRestart {
+                Text(L10n.tr("请退出并重新打开无限遥控器，以启用快捷键。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
             Button(L10n.tr("重新检查")) { model.refreshPermissions() }
             if let dismiss {
-                Button(L10n.tr(kind.granted(in: model) ? "完成" : "稍后设置"), action: dismiss)
+                Button(L10n.tr(status.isAvailable ? "完成" : "稍后设置"), action: dismiss)
                     .keyboardShortcut(.cancelAction)
             }
         }
@@ -73,8 +97,9 @@ enum SetupStage: Int, CaseIterable {
     func restored(hasModel: Bool, readiness: SetupReadiness) -> Self {
         if self == .welcome { return .welcome }
         guard hasModel else { return .remote }
-        // A paired remote may only report its connection after the guide is visible.
-        if self == .ready && !readiness.canFinish { return .permissions }
+        if self == .permissions || self == .ready {
+            return readiness.canFinish ? .ready : .permissions
+        }
         return self
     }
 }
@@ -83,15 +108,18 @@ struct SetupReadiness: Equatable {
     let connected: Bool
     let inputMonitoring: Bool
     let accessibility: Bool
+    let canPostShortcuts: Bool
     let listening: Bool
 
     var hasPermissions: Bool { inputMonitoring && accessibility }
-    var canFinish: Bool { connected && hasPermissions && listening }
+    var needsSeparateInputAuthorization: Bool { accessibility && !inputMonitoring }
+    var canFinish: Bool { connected && hasPermissions && canPostShortcuts && listening }
 
     @MainActor init(model: RemoteModel) {
         connected = model.connected && model.readiness != .ambiguous
-        inputMonitoring = PermissionKind.inputMonitoring.granted(in: model)
-        accessibility = PermissionKind.accessibility.granted(in: model)
+        inputMonitoring = model.canListen
+        accessibility = model.canUseAccessibility
+        canPostShortcuts = model.canPost
         listening = model.canReadKeys
     }
 }

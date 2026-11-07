@@ -6,7 +6,8 @@ struct LiveRemoteView: View {
     nonisolated static let preferredHeight: CGFloat = 451
 
     let model: RemoteModel
-    let showWorkspace: () -> Void
+    let workspaceVisible: () -> Bool
+    let toggleWorkspace: () -> Void
     @Binding var isAlwaysOnTop: Bool
     let hideModel: () -> Void
     let confirmQuit: () -> Void
@@ -26,7 +27,7 @@ struct LiveRemoteView: View {
 
     private var toolbar: some View {
         HStack(spacing: 0) {
-            windowButton("sidebar.left", title: L10n.tr("打开工作台"), action: showWorkspace)
+            windowButton("sidebar.left", title: workspaceCommand, action: toggleWorkspace)
                 .focused($workspaceControlFocused)
             Spacer(minLength: 0)
             windowButton("minus", title: L10n.tr("隐藏遥控器模型"), action: hideModel)
@@ -36,6 +37,10 @@ struct LiveRemoteView: View {
         .frame(minWidth: 0, maxWidth: .infinity)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
         .clipped()
+    }
+
+    private var workspaceCommand: String {
+        L10n.tr(workspaceVisible() ? "关闭工作台" : "打开工作台")
     }
 
     private var casing: some View {
@@ -59,7 +64,7 @@ struct LiveRemoteView: View {
         .contextMenu {
             Text(L10n.format("无限遥控器 · %@", String(describing: model.connectionStatus)))
             Divider()
-            Button(L10n.tr("打开工作台"), action: showWorkspace)
+            Button(workspaceCommand, action: toggleWorkspace)
             Toggle(L10n.tr("窗口置顶"), isOn: $isAlwaysOnTop)
             Divider()
             Button(L10n.tr("退出无限遥控器"), action: confirmQuit)

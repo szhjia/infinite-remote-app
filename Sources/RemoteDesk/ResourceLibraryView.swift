@@ -307,7 +307,7 @@ struct AppSettingsView: View {
                     HStack {
                         Label(kind.title, systemImage: kind.symbol)
                         Spacer()
-                        Text(L10n.tr(kind.granted(in: model) ? "已授权" : "尚未授权")).foregroundStyle(.secondary)
+                        Text(kind.status(in: model).title).foregroundStyle(.secondary)
                         Button(L10n.tr("查看")) { permission = kind }
                     }
                 }

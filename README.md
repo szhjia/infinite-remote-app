@@ -6,17 +6,17 @@ Control macOS and your selected applications with independently installed remote
 
 The GitHub repository is `szhjia/infinite-remote-app`.
 
-## Release v0.0.1
+## Release v0.0.2
 
-Download the macOS installer ZIP from [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.1). Requires macOS 14+. See [release notes](RELEASE_NOTES.md) for architecture and signing details. To build a release archive, run `./scripts/package-release.sh`.
+Download the DMG from [GitHub Releases](https://github.com/szhjia/infinite-remote-app/releases/tag/v0.0.2), open it, and drag Infinite Remote to Applications. The published build requires an Apple silicon Mac with macOS 14 or later. See the [release notes](RELEASE_NOTES.md) for signing details. To build a ZIP archive, run `./scripts/package-release.sh`.
 
 ## Usage
 
 1. Launch `dist/Infinite Remote.app`. New installations contain no real remote models. The skippable setup walks through adding a model, Input Monitoring, Accessibility, and a connection check; reopen it from Settings at any time. The interface follows the system language, with English fallback.
 2. Open Remote Library in the sidebar. Install a model from a working subscription, or choose Import ZIP to select a local ZIP directly; an unpacked model folder also works. No extraction step is needed for ZIP import. Installed models appear in the sidebar and remain available offline, even while disconnected.
-3. Pair the remote in macOS Bluetooth settings and select its installed model. Enable Input Monitoring to read its buttons; simulated shortcuts and app-control actions also require Accessibility. Each permission has its own setup page in Settings. Return to the app to recheck grants.
+3. Pair the remote in macOS Bluetooth settings and select its installed model. Start with Accessibility. If the app still cannot read buttons, grant Input Monitoring separately. Return to the app to recheck, and reopen it if macOS asks.
 4. Select a single-press, double-press, or long-press action and click Save. For an unrecognized signal, select the row and choose Calibrate current key manually from the menu beside Restore Defaults. Model-supplied default actions can be saved as named configurations; user mappings and learned inputs remain separate from installed resources.
-5. Pause responses from the toolbar. The adjacent icon controls the remote model window. When both windows are visible, the model sits beside the workspace; on its own, drag an empty housing area to move it. Right-click for connection state and workspace visibility. Diagnostics report press/release events and suspend the app’s own configured actions.
+5. Pause responses from the toolbar. The workbench title bar controls the floating remote model. Use the model’s top-left button or context menu to open or close the workbench. When the workbench first opens, the menu bar icon appears and can reopen either window separately. Diagnostics report press/release events and suspend the app’s own configured actions.
 6. Open Settings → Media Settings to choose up to nine local applications. With the Xiaomi package defaults, Live opens the selector; Left/Right navigate, OK opens and Back closes. The menu beside Restore Defaults provides personal configuration selection, import and export.
 
 Settings manages HTTPS subscriptions independently of installed remotes. Refresh checks the catalog; install and update are explicit actions. A model can only be updated to a higher release from the same source, including local ZIP imports owned by the local source. Another source cannot replace it. Removing a subscription leaves its installed models in place; a failed refresh keeps the last successful catalog.

@@ -119,6 +119,10 @@
 "已导入型号：%@" = "Imported model: %@";
 "已执行：%@" = "Executed: %@";
 "已授权" = "Allowed";
+"可读取" = "Can Read";
+"先开启辅助功能" = "Enable Accessibility First";
+"请退出并重新打开无限遥控器，以启用快捷键。" = "Quit and reopen Infinite Remote to enable shortcuts.";
+"重新打开后会回到这一步。" = "Setup will resume at this step.";
 "已收到「%@」的按键信号，保存后生效。" = "Received the signal for “%@”. Save to apply it.";
 "已添加" = "Added";
 "已由其他来源安装" = "Installed from Another Source";
@@ -375,6 +379,7 @@
 "保存更改" = "Save Changes";
 "已添加型号：%@" = "Installed Model: %@";
 "打开工作台" = "Open Workspace";
+"关闭工作台" = "Close Workspace";
 "清除搜索" = "Clear Search";
 "此订阅源暂无可用资源" = "No resources in this source";
 "查看全部订阅源" = "Show All Sources";

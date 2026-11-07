@@ -2,18 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>com.remotedesk.mac</string>
-  <key>CFBundleName</key><string>Infinite Remote</string>
-  <key>CFBundleDisplayName</key><string>Infinite Remote</string>
-  <key>CFBundleDevelopmentRegion</key><string>en</string>
-  <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
-  <key>CFBundleIconFile</key><string>RemoteDesk.icns</string>
-  <key>CFBundleExecutable</key><string>RemoteDesk</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.0.1</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSInputMonitoringUsageDescription</key><string>Infinite Remote reads button signals from your selected remote to configure keys and trigger actions.</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Infinite Remote</string>
+	<key>CFBundleExecutable</key>
+	<string>RemoteDesk</string>
+	<key>CFBundleIconFile</key>
+	<string>RemoteDesk.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.remotedesk.mac</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+	</array>
+	<key>CFBundleName</key>
+	<string>Infinite Remote</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.2</string>
+	<key>CFBundleVersion</key>
+	<string>3</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSInputMonitoringUsageDescription</key>
+	<string>Infinite Remote reads button signals from your selected remote to configure keys and trigger actions.</string>
 </dict>
 </plist>

@@ -10,7 +10,8 @@ struct RemoteDeskApp: App {
     var body: some Scene {
         @Bindable var windows = windows
         let status = trayStatus
-        MenuBarExtra(isInserted: $windows.isMenuBarItemInserted) {
+        let isInserted = windows.isMenuBarItemInserted
+        MenuBarExtra(isInserted: Binding(get: { isInserted }, set: { windows.isMenuBarItemInserted = $0 })) {
             TrayMenu(model: windows.model, windows: windows)
         } label: {
             Image(status.asset, bundle: .module)
@@ -82,11 +83,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var setupWindow: NSWindow?
     private var showsSetupKeyboardFocus = false
     private var hasPresentedWorkspace = false
-    private var isMenuBarItemEnabled = true
-    var isMenuBarItemInserted: Bool {
-        get { hasPresentedWorkspace && setupWindow == nil && isMenuBarItemEnabled }
-        set { isMenuBarItemEnabled = newValue }
-    }
+    var isMenuBarItemInserted = false
     private(set) var needsInitialSetup = false
     private(set) var didDeferSetup = false
     private var firstKeyToConfigure: String?
@@ -196,8 +193,20 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if window.isMiniaturized { window.deminiaturize(nil) }
         present(window)
         updateWorkspaceVisibility()
-        if isWorkspaceVisible { hasPresentedWorkspace = true }
+        if isWorkspaceVisible && !hasPresentedWorkspace {
+            hasPresentedWorkspace = true
+            isMenuBarItemInserted = true
+        }
         updateRemoteAttachment()
+    }
+
+    private func toggleWorkspace() {
+        updateWorkspaceVisibility()
+        if isWorkspaceVisible {
+            configuration?.close()
+        } else {
+            showWorkspace()
+        }
     }
 
     func toggleRemoteModel() {
@@ -281,7 +290,9 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.onDismiss = { [weak self] in self?.setRemoteModelVisible(false) }
         let hosting = NSHostingController(rootView: LiveRemoteView(
-            model: model, showWorkspace: { [weak self] in self?.showWorkspace() },
+            model: model,
+            workspaceVisible: { [weak self] in self?.isWorkspaceVisible == true },
+            toggleWorkspace: { [weak self] in self?.toggleWorkspace() },
             isAlwaysOnTop: Binding(
                 get: { [weak self] in self?.isRemoteAlwaysOnTop == true },
                 set: { [weak self] in self?.isRemoteAlwaysOnTop = $0 }
@@ -430,6 +441,14 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         model.setDiagnosing(true)
         present(diagnostics)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === setupWindow, needsInitialSetup else { return true }
+        // The red close button quits the first-run app so reopening can apply new grants.
+        // The guide's own actions call close() directly and continue into the workbench.
+        NSApp.terminate(nil)
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

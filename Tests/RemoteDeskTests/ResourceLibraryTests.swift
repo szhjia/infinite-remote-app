@@ -146,15 +146,15 @@ func emptyModelNeedsAResourceEvenWhenPermissionsAreGranted() throws {
     #expect(!model.hasRemote)
     #expect(model.readiness == .noModel)
     #expect(model.profile == nil)
-    #expect(!PermissionKind.inputMonitoring.granted(in: model))
-    #expect(!PermissionKind.accessibility.granted(in: model))
+    #expect(PermissionKind.inputMonitoring.status(in: model) == .notAllowed)
+    #expect(PermissionKind.accessibility.status(in: model) == .notAllowed)
     input.state = .idle; allowed = true; model.refreshPermissions()
-    #expect(PermissionKind.inputMonitoring.granted(in: model))
-    #expect(PermissionKind.accessibility.granted(in: model))
+    #expect(PermissionKind.inputMonitoring.status(in: model) == .coveredByAccessibility)
+    #expect(PermissionKind.accessibility.status(in: model) == .allowed)
     #expect(model.readiness == .noModel)
     input.state = .permission; allowed = false; model.refreshPermissions()
-    #expect(!PermissionKind.inputMonitoring.granted(in: model))
-    #expect(!PermissionKind.accessibility.granted(in: model))
+    #expect(PermissionKind.inputMonitoring.status(in: model) == .notAllowed)
+    #expect(PermissionKind.accessibility.status(in: model) == .notAllowed)
 }
 
 @Test @MainActor
@@ -391,7 +391,7 @@ func deniedInputMonitoringRemainsDeniedWhileHardwareIsAmbiguous() throws {
     model.refreshPermissions()
     #expect(model.monitorState == .ambiguous)
     #expect(!model.canListen)
-    #expect(!PermissionKind.inputMonitoring.granted(in: model))
+    #expect(PermissionKind.inputMonitoring.status(in: model) == .notAllowed)
     model.pressVirtualKey("up")
     #expect(model.requestedPermission == .inputMonitoring)
 }

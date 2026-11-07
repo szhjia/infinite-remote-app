@@ -1,6 +1,7 @@
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import CoreGraphics
+import IOKit.hid
 import Observation
 import RemoteCore
 
@@ -94,6 +95,7 @@ final class RemoteModel {
     private(set) var canListen = false
     private(set) var canPost = false
     private(set) var canUseAccessibility = false
+    var shortcutsNeedRestart: Bool { canUseAccessibility && !canPost }
     var requestedPermission: PermissionKind?
     private(set) var hardwarePress: HardwarePress?
     private(set) var lastKeyRelease: RemoteKeyRelease?
@@ -429,13 +431,13 @@ final class RemoteModel {
     }
 
     func requestListen() {
-        if !CGRequestListenEventAccess() { openPrivacy("Privacy_ListenEvent") }
+        if !IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) { openPrivacy("Privacy_ListenEvent") }
         refreshPermissions()
     }
 
-    func requestPost() {
-        let requested = CGRequestPostEventAccess()
-        if !requested || !AXIsProcessTrusted() { openPrivacy("Privacy_Accessibility") }
+    func requestAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        if !AXIsProcessTrustedWithOptions(options as CFDictionary) { openPrivacy("Privacy_Accessibility") }
         refreshPermissions()
     }
 

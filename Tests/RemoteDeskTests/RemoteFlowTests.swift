@@ -51,6 +51,56 @@ func setupSeparatesHardwareConnectionFromPermissionListeningAndPause() {
 }
 
 @Test @MainActor
+func setupShowsAccessibilityWhileShortcutPermissionCatchesUp() {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "Xiaomi Remote")
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let input = InputFixture(devices: [device])
+    var accessibilityAllowed = false
+    var listeningAllowed = false
+    var postingAllowed = false
+    let model = fixtureRemoteModel(
+        hid: input, storeURL: directory.appending(path: "configuration.json"),
+        permissions: .init(postEvents: { postingAllowed }, accessibility: { accessibilityAllowed },
+                           listenEvents: { listeningAllowed }),
+        runAction: { _, _ in }
+    )
+
+    model.refreshPermissions()
+    #expect(SetupReadiness(model: model).connected)
+    #expect(PermissionKind.accessibility.status(in: model) == .notAllowed)
+    #expect(PermissionKind.inputMonitoring.status(in: model) == .notAllowed)
+    #expect(!SetupReadiness(model: model).needsSeparateInputAuthorization)
+    #expect(!model.shortcutsNeedRestart)
+
+    listeningAllowed = true
+    input.state = .listening
+    model.refreshPermissions()
+    #expect(PermissionKind.inputMonitoring.status(in: model) == .allowed)
+    #expect(!SetupReadiness(model: model).canFinish)
+
+    // macOS can grant listening with Accessibility while event posting still needs a relaunch.
+    accessibilityAllowed = true
+    model.refreshPermissions()
+    #expect(PermissionKind.accessibility.status(in: model) == .allowed)
+    #expect(PermissionKind.inputMonitoring.status(in: model) == .coveredByAccessibility)
+    #expect(!SetupReadiness(model: model).needsSeparateInputAuthorization)
+    #expect(model.shortcutsNeedRestart)
+    #expect(!SetupReadiness(model: model).canFinish)
+
+    postingAllowed = true
+    model.refreshPermissions()
+    #expect(!model.shortcutsNeedRestart)
+    #expect(SetupReadiness(model: model).canFinish)
+
+    listeningAllowed = false
+    input.state = .permission
+    model.refreshPermissions()
+    #expect(SetupReadiness(model: model).needsSeparateInputAuthorization)
+    #expect(!SetupReadiness(model: model).canFinish)
+}
+
+@Test @MainActor
 func diagnosticVerificationRequiresAFreshPhysicalPressAndReleaseAndSurvivesReload() throws {
     let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "Xiaomi Remote")
     let enter = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
@@ -1057,11 +1107,15 @@ func firstRunDetectsDeviceBeforeAuthorizationAndOnlyFinishesWhenReady() {
     model.refreshPermissions()
     #expect(SetupReadiness(model: model).hasPermissions)
     #expect(!SetupReadiness(model: model).canFinish)
+    #expect(SetupStage.permissions.restored(hasModel: true, readiness: SetupReadiness(model: model)) == .permissions)
 
     input.onMonitorState(.listening)
     #expect(!model.hasVerifiedInput)
-    #expect(SetupReadiness(model: model).canFinish)
-    #expect(SetupStage.ready.restored(hasModel: true, readiness: SetupReadiness(model: model)) == .ready)
+    let ready = SetupReadiness(model: model)
+    #expect(ready.canFinish)
+    #expect(SetupStage.permissions.restored(hasModel: true, readiness: ready) == .ready)
+    #expect(SetupStage.ready.restored(hasModel: true, readiness: ready) == .ready)
+    #expect(SetupStage.welcome.restored(hasModel: true, readiness: ready) == .welcome)
 
     input.onAmbiguousDevices([device])
     #expect(!SetupReadiness(model: model).connected)
