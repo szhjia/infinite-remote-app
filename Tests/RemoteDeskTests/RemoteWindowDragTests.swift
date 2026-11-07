@@ -8,7 +8,8 @@ func draggingDockedRemoteMovesBothWindows() throws {
     _ = NSApplication.shared
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let model = fixtureRemoteModel(hid: HIDMonitor(), storeURL: directory.appending(path: "configuration.json"),
+    let model = fixtureRemoteModel(hid: HIDMonitor(recoveryURL: directory.appending(path: "keyboard-capture.json")),
+                                   storeURL: directory.appending(path: "configuration.json"),
                                    runAction: { _, _ in })
     let workspace = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 400),
                              styleMask: [.titled], backing: .buffered, defer: false)

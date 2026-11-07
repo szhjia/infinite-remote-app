@@ -11,6 +11,12 @@ private final class InputFixture: RemoteInputSource {
     var onMonitorState: (InputMonitorState) -> Void = { _ in }
     var onEvent: (DeviceID, RemoteInputEvent) -> Void = { _, _ in }
     var onAmbiguousDevices: (Set<DeviceID>) -> Void = { _ in }
+    var capturesKeyboard = false
+    var capturedUsages: Set<Int>?
+
+    func captures(_ input: InputCode, from origin: RemoteInputOrigin?) -> Bool {
+        capturesKeyboard && (capturedUsages.map { $0.contains(input.keyboardUsage ?? 0) } ?? true)
+    }
 
     func press(_ device: DeviceID, _ input: InputCode) { onEvent(device, .pressed(input)) }
     var selectedDevice: DeviceID?
@@ -326,6 +332,7 @@ func selectedRemoteLearnsOnceAndRunsTheChatGPTActionAfterRestart() async throws 
     #expect(!reopened.isRunning)
 
     reopened.isEnabled = true
+    reopenedInput.capturesKeyboard = true
     reopenedInput.press(xiaomi, enter)
     try await waitForAction(on: reopened)
     try #require(dispatched.count == 2)
@@ -461,7 +468,7 @@ func namedProfilesAndImportsCannotOverwriteTheBuiltInOrLoseDrafts() throws {
     defer { try? FileManager.default.removeItem(at: directory) }
     let storeURL = directory.appending(path: "configuration.json")
     let model = fixtureRemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
-    model.setAction(.appleMenu, for: "menu")
+    model.setAction(.appleMenu, for: "back")
     #expect(!model.saveConfigurationChanges())
     #expect(!model.saveConfigurationChanges(as: " \(L10n.tr("默认配置")) "))
     #expect(model.profile == legacyModelProfile(.defaults))
@@ -471,6 +478,7 @@ func namedProfilesAndImportsCannotOverwriteTheBuiltInOrLoseDrafts() throws {
     let file = directory.appending(path: "profile.json")
     try ProfileArchive(saved).write(to: file)
     let archive = try ProfileArchive.read(from: file)
+    #expect(archive.target == .chatGPT)
     #expect(!model.importProfile(archive, as: "cafe\u{301}", discardingDraft: false))
     model.restoreDefaultActions()
     #expect(!model.selectProfile(AgentProfile.defaults.id))
@@ -479,7 +487,7 @@ func namedProfilesAndImportsCannotOverwriteTheBuiltInOrLoseDrafts() throws {
     #expect(model.importProfile(archive, as: "备份", discardingDraft: true))
     let reopened = fixtureRemoteModel(hid: InputFixture(devices: []), storeURL: storeURL, runAction: { _, _ in })
     #expect(reopened.profiles.map(\.name) == [L10n.tr("默认配置"), "Café", "备份"])
-    #expect(reopened.profile?.actions["menu"] == .appleMenu)
+    #expect(reopened.profile?.actions["back"] == .appleMenu)
     #expect(reopened.profiles.allSatisfy { $0.modelID == RemoteDefinition.xiaomiID })
     #expect(reopened.profiles.first == legacyModelProfile(.defaults))
 }
@@ -517,15 +525,16 @@ func xiaomiButtonsWorkWithoutLearningAndUseTheSavedAction() async throws {
     model.setAction(.showDesktop, for: "plus")
     #expect(model.hasConfigurationChanges)
     #expect(model.saveConfigurationChanges(as: "自定义"))
+    input.capturesKeyboard = true
     press(0x80)
     try await waitForAction(on: model)
     #expect(dispatched == [.volumeUp, .volumeDown, .showDesktop])
     #expect(model.editableRemote?.keys.isEmpty == true)
 }
 
-@Test(arguments: [0x4A, 0x35, 0x65]) @MainActor
+@Test(arguments: [0x35, 0x65]) @MainActor
 func xiaomiChooserStaysOpenAfterOnePressWithMultipleHIDReports(usage: Int) {
-    let key = [0x4A: "home", 0x35: "tv", 0x65: "menu"][usage]!
+    let key = [0x35: "tv", 0x65: "menu"][usage]!
     let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
     let array = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
                           usage: Int(UInt32.max), report: 1, value: usage)
@@ -543,10 +552,6 @@ func xiaomiChooserStaysOpenAfterOnePressWithMultipleHIDReports(usage: Int) {
     let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             runAction: { _, _ in })
     model.refreshPermissions()
-    if key == "home" {
-        model.setAction(.appSwitcher, for: key)
-        #expect(model.saveConfigurationChanges(as: "主页切换应用"))
-    }
     var visible = false
     var toggles = 0
     model.onSwitchApps = { visible = true; toggles += 1 }
@@ -721,6 +726,8 @@ func voiceShortPressDoesNotRecordAndPhysicalReleaseSubmitsOnlyOnce() async throw
     let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             dictation: dictation, runAction: { _, _ in })
     model.refreshPermissions()
+    model.setAction(.dictation, for: "voice")
+    try #require(model.saveConfigurationChanges(as: "Legacy dictation"))
     model.selectSlot("voice")
     model.startLearning()
     input.onEvent(device, .pressed(code))
@@ -799,6 +806,8 @@ func dictationNeverSubmitsAfterAnInterruption(_ interruption: String) async thro
     let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
                             dictation: dictation, runAction: { _, _ in })
     model.refreshPermissions()
+    model.setAction(.dictation, for: "voice")
+    try #require(model.saveConfigurationChanges(as: "Legacy dictation"))
     model.selectSlot("voice")
     model.startLearning()
     input.onEvent(device, .pressed(code))
@@ -979,11 +988,15 @@ func versionSixConfigurationPreservesSelectedXiaomiAndItsCalibratedProfile() thr
     try original.write(to: storeURL)
 
     let model = fixtureRemoteModel(hid: InputFixture(devices: [device]), storeURL: storeURL, runAction: { _, _ in })
-    #expect(model.profile == legacyModelProfile(profile))
+    #expect(model.unassignedProfiles == [legacyModelProfile(profile)])
+    #expect(model.profile?.id == AgentProfile.defaults.id)
     #expect(model.config.selectedDevice == device)
     #expect(model.config.activeRemote?.slot(for: signal) == "back")
     #expect(model.config.version == Configuration.currentVersion)
     #expect(try Data(contentsOf: storeURL.appendingPathExtension("v6.backup")) == original)
+    #expect(model.assignProfile(profile.id))
+    #expect(model.profile?.target == .chatGPT)
+    #expect(model.profile?.actions == profile.actions)
 }
 
 @Test @MainActor
@@ -991,6 +1004,8 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
     let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
     let input = InputFixture(devices: [device])
     input.state = .listening
+    input.capturesKeyboard = true
+    input.capturedUsages = [0x28]
     let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
     var actions: [AgentAction] = []
@@ -999,35 +1014,28 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
         actions.append(action)
     }
     model.refreshPermissions()
-    model.setAction(.showDesktop, for: "tv")
-    model.setAction(.lockScreen, for: "tv-double")
-    model.setAction(.toggleDisplays, for: "tv-long")
+    model.setAction(.showDesktop, for: "ok")
+    model.setAction(.lockScreen, for: "ok-double")
+    model.setAction(.toggleDisplays, for: "ok-long")
     model.setAction(.showDesktop, for: "voice-double")
     model.setAction(.showDesktop, for: "minus-long")
-    model.setAction(.dictation, for: "tv")
+    model.setAction(.dictation, for: "ok")
     #expect(model.editableActions["voice-double"] == nil)
     #expect(model.editableActions["minus-long"] == nil)
-    #expect(model.editableActions["tv"] == .showDesktop)
+    #expect(model.editableActions["ok"] == .showDesktop)
     try #require(model.saveConfigurationChanges(as: "手势"))
 
-    let code = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x35, report: 1, value: 1)
+    let code = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x28, report: 1, value: 1)
     let origin = RemoteInputOrigin(endpoint: 9, cookie: 1)
-    let array = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
-                          usage: Int(UInt32.max), report: 1, value: 0x35)
-    let arrayOrigin = RemoteInputOrigin(endpoint: 9, cookie: 2)
     func press() {
-        input.onEvent(device, .pressed(array, origin: arrayOrigin))
         input.onEvent(device, .pressed(code, origin: origin))
-        #expect(model.pressedHardwareKey == "tv")
+        #expect(model.pressedHardwareKey == "ok")
     }
     func release() {
         let previousRelease = model.lastKeyRelease
         input.onEvent(device, .released(code, origin: origin))
-        #expect(model.pressedHardwareKey == "tv")
-        #expect(model.lastKeyRelease == previousRelease)
-        input.onEvent(device, .released(array, origin: arrayOrigin))
         #expect(model.pressedHardwareKey == nil)
-        #expect(model.lastKeyRelease?.key == "tv")
+        #expect(model.lastKeyRelease?.key == "ok")
         #expect(model.lastKeyRelease != previousRelease)
     }
     func tap() { press(); release() }
@@ -1068,7 +1076,6 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
     press()
     input.press(device, right)
     input.onEvent(device, .released(code, origin: origin))
-    input.onEvent(device, .released(array, origin: arrayOrigin))
     #expect(model.hardwarePress?.key == "right")
     #expect(model.pressedHardwareKey == "right")
     input.onEvent(device, .released(right))

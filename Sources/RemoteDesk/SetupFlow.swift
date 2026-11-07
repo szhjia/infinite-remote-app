@@ -83,11 +83,24 @@ struct PermissionStepView: View {
 }
 
 enum SetupStage: Int, CaseIterable {
-    case welcome, remote, permissions, ready
+    // Existing raw values are persisted in UserDefaults.
+    case welcome = 0
+    case voiceDriver = 4
+    case remote = 1
+    case permissions = 2
+    case ready = 3
+
+    var position: Int { Self.allCases.firstIndex(of: self)! }
+
+    func adjacent(_ offset: Int) -> Self? {
+        let index = position + offset
+        return Self.allCases.indices.contains(index) ? Self.allCases[index] : nil
+    }
 
     var title: String {
         switch self {
         case .welcome: L10n.tr("无限遥控器")
+        case .voiceDriver: L10n.tr("安装遥控器语音驱动")
         case .remote: L10n.tr("连接遥控器")
         case .permissions: L10n.tr("允许应用读取按键和执行动作")
         case .ready: L10n.tr("完成设置")
@@ -95,7 +108,7 @@ enum SetupStage: Int, CaseIterable {
     }
 
     func restored(hasModel: Bool, readiness: SetupReadiness) -> Self {
-        if self == .welcome { return .welcome }
+        if self == .welcome || self == .voiceDriver { return self }
         guard hasModel else { return .remote }
         if self == .permissions || self == .ready {
             return readiness.canFinish ? .ready : .permissions

@@ -18,7 +18,20 @@ protocol RemoteInputSource: AnyObject {
     var onEvent: (DeviceID, RemoteInputEvent) -> Void { get set }
     var onAmbiguousDevices: (Set<DeviceID>) -> Void { get set }
     var selectedDevice: DeviceID? { get set }
+    var selectedBluetoothIdentifier: UUID? { get }
+    var wantsExclusiveKeyboard: Bool { get set }
+    var preservesNativeF5: Bool { get set }
+    var onKeyboardCapture: (Bool) -> Void { get set }
+    func captures(_ input: InputCode, from origin: RemoteInputOrigin?) -> Bool
     func refresh() -> InputMonitorState
+}
+
+extension RemoteInputSource {
+    var selectedBluetoothIdentifier: UUID? { nil }
+    var wantsExclusiveKeyboard: Bool { get { false } set {} }
+    var preservesNativeF5: Bool { get { false } set {} }
+    var onKeyboardCapture: (Bool) -> Void { get { { _ in } } set {} }
+    func captures(_ input: InputCode, from origin: RemoteInputOrigin?) -> Bool { false }
 }
 
 struct RemoteInputOrigin: Hashable {
@@ -39,10 +52,22 @@ final class HIDMonitor: RemoteInputSource {
     var onMonitorState: (InputMonitorState) -> Void = { _ in }
     var onEvent: (DeviceID, RemoteInputEvent) -> Void = { _, _ in }
     var onAmbiguousDevices: (Set<DeviceID>) -> Void = { _ in }
+    var onKeyboardCapture: (Bool) -> Void = { _ in }
+    var wantsExclusiveKeyboard = false {
+        didSet {
+            if oldValue != wantsExclusiveKeyboard { updateListening() }
+        }
+    }
+    var preservesNativeF5 = false {
+        didSet {
+            if oldValue != preservesNativeF5, heldF5.isEmpty { updateListening() }
+        }
+    }
     var selectedDevice: DeviceID? {
         didSet {
             guard oldValue != selectedDevice else { return }
             edges = .init()
+            heldF5.removeAll()
             updateListening()
         }
     }
@@ -61,13 +86,46 @@ final class HIDMonitor: RemoteInputSource {
     private var endpoints: [UInt64: Endpoint] = [:]
     private var ambiguousDevices: Set<DeviceID> = []
     private var opened: [UInt64: IOHIDDevice] = [:]
+    private var exclusiveEndpoints: Set<UInt64> = []
+    private var attemptedExclusive: Set<UInt64> = []
+    private let keyMap: RemoteKeyboardMap
+    private var mappedKeyboard: UInt64?
+    private var heldF5: Set<RemoteInputOrigin> = []
+    private var passesNativeF5 = false
     private var edges = InputEdges<UInt64>()
+
+    init(recoveryURL: URL) {
+        keyMap = RemoteKeyboardMap(recoveryURL: recoveryURL)
+    }
+
+    var selectedBluetoothIdentifier: UUID? {
+        guard let selectedDevice, !ambiguousDevices.contains(selectedDevice) else { return nil }
+        let identifiers = Set(endpoints.values.compactMap { endpoint -> UUID? in
+            guard endpoint.identity == selectedDevice,
+                  let value = IOHIDDeviceGetProperty(endpoint.device, kIOHIDPhysicalDeviceUniqueIDKey as CFString) as? String
+            else { return nil }
+            return UUID(uuidString: value)
+        })
+        return identifiers.count == 1 ? identifiers.first : nil
+    }
 
     func refresh() -> InputMonitorState {
         hasPermission = CGPreflightListenEventAccess()
         if manager == nil { startDiscovery() }
         updateListening()
         return state
+    }
+
+    func captures(_ input: InputCode, from origin: RemoteInputOrigin?) -> Bool {
+        guard let origin else { return false }
+        if exclusiveEndpoints.contains(origin.endpoint) { return true }
+        guard mappedKeyboard == origin.endpoint,
+              RemoteKeyboardMap.covers(input, preservingNativeF5: passesNativeF5),
+              let location = endpoints[origin.endpoint]?.location else { return false }
+        if keyMap.isActive(at: UInt32(truncatingIfNeeded: location)) { return true }
+        mappedKeyboard = nil
+        onKeyboardCapture(false)
+        return false
     }
 
     private func startDiscovery() {
@@ -99,11 +157,27 @@ final class HIDMonitor: RemoteInputSource {
     }
 
     private func updateListening() {
+        // Keep the same delivery path for both edges of a physical F5 press.
+        if heldF5.isEmpty { passesNativeF5 = preservesNativeF5 }
         let ambiguous = selectedDevice.map(ambiguousDevices.contains) ?? false
         let selected = hasPermission && !ambiguous ? endpoints.filter { $0.value.identity == selectedDevice } : [:]
-        for id in opened.keys.filter({ selected[$0] == nil }) {
+        // Only try seizure for the keyboard services of the known 2 Pro, never for
+        // the system keyboard, another paired device, or an unidentified service.
+        let keyboard = Set(selected.compactMap { id, entry in
+            entry.identity.vendor == 0x2717 && entry.identity.product == 0x32B8
+                && IOHIDDeviceConformsTo(entry.device, 1, 6) ? id : nil
+        })
+        let requested = wantsExclusiveKeyboard ? keyboard : []
+        let seizable = passesNativeF5 ? Set<UInt64>() : requested
+        attemptedExclusive.formIntersection(requested)
+        if passesNativeF5 { attemptedExclusive.subtract(exclusiveEndpoints) }
+        for id in opened.keys.filter({
+            selected[$0] == nil || exclusiveEndpoints.contains($0) && !seizable.contains($0)
+                || seizable.contains($0) && !attemptedExclusive.contains($0)
+        }) {
             closeEndpoint(id)
         }
+        defer { updateKeyboardMap(requested: requested) }
         if ambiguous {
             state = .ambiguous
             return
@@ -113,11 +187,17 @@ final class HIDMonitor: RemoteInputSource {
             return
         }
 
-        let options = IOOptionBits(kIOHIDOptionsTypeNone)
         var firstFailure: IOReturn?
         for (id, entry) in selected where opened[id] == nil {
             let device = entry.device
-            let result = IOHIDDeviceOpen(device, options)
+            var result = kIOReturnError
+            if seizable.contains(id), attemptedExclusive.insert(id).inserted {
+                result = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
+                if result == kIOReturnSuccess { exclusiveEndpoints.insert(id) }
+            }
+            if result != kIOReturnSuccess {
+                result = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            }
             guard result == kIOReturnSuccess else {
                 if firstFailure == nil { firstFailure = result }
                 continue
@@ -130,6 +210,14 @@ final class HIDMonitor: RemoteInputSource {
             }, Unmanaged.passUnretained(self).toOpaque())
             IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         }
+        if !exclusiveEndpoints.isEmpty && !keyboard.isSubset(of: exclusiveEndpoints) {
+            // A partial grab can still deliver the same physical press through a
+            // second service. Restore pass-through on the whole keyboard group.
+            for id in Array(exclusiveEndpoints) { closeEndpoint(id) }
+            attemptedExclusive.formUnion(keyboard)
+            updateListening()
+            return
+        }
 
         // A remote can expose multiple endpoints. Only one needs to open to read input.
         if !opened.isEmpty {
@@ -141,12 +229,27 @@ final class HIDMonitor: RemoteInputSource {
         }
     }
 
+    private func updateKeyboardMap(requested: Set<UInt64>) {
+        let seized = !requested.isEmpty && requested.isSubset(of: exclusiveEndpoints)
+        mappedKeyboard = nil
+        if !seized, requested.count == 1, let id = requested.first, opened[id] != nil,
+           let location = endpoints[id]?.location,
+           keyMap.capture(at: UInt32(truncatingIfNeeded: location), preservingNativeF5: passesNativeF5) {
+            mappedKeyboard = id
+        } else {
+            keyMap.restore()
+        }
+        onKeyboardCapture(seized || mappedKeyboard != nil)
+    }
+
     private func closeEndpoint(_ id: UInt64) {
         guard let device = opened.removeValue(forKey: id) else { return }
+        let exclusive = exclusiveEndpoints.remove(id) != nil
         IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         IOHIDDeviceRegisterInputValueCallback(device, nil, nil)
-        IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        IOHIDDeviceClose(device, IOOptionBits(exclusive ? kIOHIDOptionsTypeSeizeDevice : kIOHIDOptionsTypeNone))
         edges.remove(endpoint: id)
+        heldF5 = heldF5.filter { $0.endpoint != id }
         if let selectedDevice { onEvent(selectedDevice, .endpointClosed(id)) }
     }
 
@@ -237,9 +340,22 @@ final class HIDMonitor: RemoteInputSource {
         }
         for change in changes {
             switch change {
-            case let .pressed(value): onEvent(identity, .pressed(code(value), origin: origin))
-            case let .released(value): onEvent(identity, .released(code(value), origin: origin))
-            case let .replaced(value): onEvent(identity, .replaced(code(value), origin: origin))
+            case let .pressed(value):
+                let input = code(value)
+                if input.isKeyboardF5 { heldF5.insert(origin) }
+                onEvent(identity, .pressed(input, origin: origin))
+            case let .released(value):
+                heldF5.remove(origin)
+                onEvent(identity, .released(code(value), origin: origin))
+            case let .replaced(value):
+                heldF5.remove(origin)
+                onEvent(identity, .replaced(code(value), origin: origin))
+            }
+        }
+        if heldF5.isEmpty, preservesNativeF5 != passesNativeF5 {
+            Task { [weak self] in
+                guard let self, heldF5.isEmpty, preservesNativeF5 != passesNativeF5 else { return }
+                updateListening()
             }
         }
     }

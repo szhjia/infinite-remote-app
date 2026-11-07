@@ -39,6 +39,7 @@ public struct InputCode: Codable, Hashable, Sendable {
     public var label: String {
         String(format: "%02X:%02X / %02X:%02X · R%d · %d", collectionPage, collectionUsage, page, usage, report, value)
     }
+
 }
 
 public enum RemoteLayout: String, Codable, CaseIterable, Sendable {
@@ -85,6 +86,10 @@ public struct KeyboardShortcut: Codable, Equatable, Sendable {
         (modifiers.contains(.control) ? "⌃" : "") + (modifiers.contains(.option) ? "⌥" : "")
         + (modifiers.contains(.shift) ? "⇧" : "") + (modifiers.contains(.command) ? "⌘" : "") + keyName
     }
+
+    public var isVoiceCombination: Bool {
+        platform == "macOS" && !modifiers.isEmpty && keyCode < 128 && !keyName.isEmpty && keyName.count <= 64
+    }
 }
 
 public struct SystemHotKey: Codable, Hashable, Sendable {
@@ -99,6 +104,7 @@ public struct SystemHotKey: Codable, Hashable, Sendable {
 
 public enum AgentAction: Codable, Equatable, Sendable {
     case openApp
+    case openFinder
     case openLink(String)
     case shortcut(KeyboardShortcut)
     case chatBar
@@ -115,6 +121,37 @@ public enum AgentAction: Codable, Equatable, Sendable {
     case volumeDown
     case mediaChooser
     case appSwitcher
+    case finder(FinderCommand)
+    case chatGPTDraft
+    case voiceShortcut(VoiceProvider, KeyboardShortcut)
+
+    public var isVoiceTrigger: Bool {
+        switch self {
+        case .dictation, .chatGPTDraft, .voiceShortcut(.macOS, _): true
+        default: false
+        }
+    }
+
+    public var isRemovedVoiceBinding: Bool {
+        if case .voiceShortcut(.weType, _) = self { return true }
+        return false
+    }
+}
+
+public enum FinderCommand: String, Codable, CaseIterable, Sendable {
+    case up, down, left, right, pageUp, pageDown, sidebar, content, open, contextMenu, escape, parent, historyBack
+
+    public var repeatsWhileHeld: Bool {
+        switch self {
+        case .up, .down, .left, .right: true
+        default: false
+        }
+    }
+}
+
+public enum VoiceProvider: String, Codable, Sendable {
+    case macOS
+    case weType // Legacy configurations and exported profiles still decode this value.
 }
 
 public struct AppTarget: Codable, Equatable, Sendable {
@@ -125,6 +162,9 @@ public struct AppTarget: Codable, Equatable, Sendable {
         self.bundleID = bundleID
         self.path = path
     }
+
+    public static let finder = Self(bundleID: "com.apple.finder")
+    public static let chatGPT = Self(bundleID: "com.openai.codex")
 }
 
 public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
@@ -176,10 +216,13 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
 }
 
 public struct Configuration: Codable, Equatable, Sendable {
-    public static let currentVersion = 9
+    public static let currentVersion = 11
     public var version = Self.currentVersion
     public var activeAgentID = AgentProfile.defaults.id
     public var activeAgentIDsByModel: [String: String]?
+    public var activeProfilesByApp: [String: [String: String]]?
+    public var addedAppsByModel: [String: [AppTarget]]?
+    public var defaultVoiceByModel: [String: AgentAction]?
     public var selectedDevice: DeviceID?
     public var selectedModelID: String?
     public var verifiedRemoteDevices: [DeviceID]?
@@ -189,6 +232,14 @@ public struct Configuration: Codable, Equatable, Sendable {
     public init() {}
 
     public mutating func upgradeLegacy() {
+        if version == 9 || version == 10 {
+            defaultVoiceByModel = defaultVoiceByModel?.filter { !$0.value.isRemovedVoiceBinding }
+            for index in agents.indices {
+                agents[index].actions = agents[index].actions.filter { !$0.value.isRemovedVoiceBinding }
+            }
+            version = Self.currentVersion
+            return
+        }
         if (6...8).contains(version) {
             migrateModelAssociations()
             version = Self.currentVersion
@@ -236,6 +287,20 @@ public struct Configuration: Codable, Equatable, Sendable {
         if selectedDevice?.isSupportedRemote != true { selectedDevice = nil }
         migrateModelAssociations()
         version = Self.currentVersion
+    }
+
+    public func activeProfileID(modelID: String, bundleID: String) -> String? {
+        if let saved = activeProfilesByApp?[modelID]?[bundleID] { return saved }
+        guard let legacyID = activeAgentIDsByModel?[modelID],
+              agents.contains(where: { $0.modelID == modelID && $0.id == legacyID && $0.target?.bundleID == bundleID })
+        else { return nil }
+        return legacyID
+    }
+
+    public mutating func selectProfile(_ id: String, modelID: String, bundleID: String) {
+        var selections = activeProfilesByApp ?? [:]
+        selections[modelID, default: [:]][bundleID] = id
+        activeProfilesByApp = selections
     }
 
     private mutating func migrateModelAssociations() {

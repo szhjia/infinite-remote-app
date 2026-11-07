@@ -18,9 +18,10 @@ struct WorkspaceBrand: View {
 }
 
 struct Workspace: View {
-    static let windowSize = NSSize(width: 1300, height: 720)
+    static let windowSize = NSSize(width: 1388, height: 720)
     static let sidebarWidth: CGFloat = 200
     private static let mappingWidth: CGFloat = 604
+    private static let appRailWidth: CGFloat = 88
 
     enum Page {
         case remote, library
@@ -66,6 +67,8 @@ struct Workspace: View {
     @State private var hotKeysError: String?
     @State private var sheet: SettingsSheet?
     @State private var pendingProfile: AgentProfile?
+    @State private var pendingApp: AppTarget?
+    @State private var appAfterSave: AppTarget?
     @State private var profileName = ""
     @State private var approveImportDiscard = false
     @State private var showConfigActions = false
@@ -75,12 +78,14 @@ struct Workspace: View {
 
     private enum SettingsSheet: Identifiable {
         case profiles, name, imported(ProfileArchive), permission(PermissionKind)
+        case shortcut(slot: String?, provider: VoiceProvider?)
         var id: String {
             switch self {
             case .profiles: "profiles"
             case .name: "name"
             case .imported: "import"
             case let .permission(kind): "permission-" + kind.id
+            case let .shortcut(slot, provider): "shortcut-\(slot ?? "default")-\(provider?.rawValue ?? "app")"
             }
         }
     }
@@ -109,6 +114,7 @@ struct Workspace: View {
             sidebarFocus = nil
         }
         .onChange(of: model.remoteDefinition.id) { _, _ in guideSelection = nil }
+        .onChange(of: model.editingApp.bundleID) { _, _ in systemPickerSlot = nil }
         .onChange(of: model.requestedPermission) { _, permission in
             if let permission, sheet == nil { sheet = .permission(permission) }
         }
@@ -126,7 +132,26 @@ struct Workspace: View {
             case .profiles: profilesSheet
             case .name: nameSheet(archive: nil)
             case let .imported(archive): nameSheet(archive: archive)
+            case let .shortcut(slot, provider): shortcutSheet(slot: slot, provider: provider)
             }
+        }
+        .alert(L10n.tr("要切换编辑的应用吗？"), isPresented: Binding(
+            get: { pendingApp != nil }, set: { if !$0 { pendingApp = nil } }
+        ), presenting: pendingApp) { app in
+            Button(L10n.tr("保存并切换")) {
+                if model.needsProfileName {
+                    appAfterSave = app
+                    saveProfile()
+                } else if model.saveConfigurationChanges() {
+                    model.addApp(app)
+                }
+            }
+            Button(L10n.tr("放弃更改并切换"), role: .destructive) {
+                model.addApp(app, discardingDraft: true)
+            }
+            Button(L10n.tr("取消"), role: .cancel) {}
+        } message: { _ in
+            Text(L10n.tr("当前有未保存的更改。"))
         }
     }
 
@@ -260,13 +285,104 @@ struct Workspace: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
             Divider()
-            HStack(spacing: 0) {
-                deviceStage.frame(minWidth: 0, maxWidth: .infinity)
-                Divider()
-                mapping.frame(width: Self.mappingWidth)
+            GeometryReader { geometry in
+                let configWidth = Self.appRailWidth + Self.mappingWidth + 1
+                if geometry.size.width >= configWidth + 320 {
+                    HStack(spacing: 0) {
+                        deviceStage.frame(minWidth: 320, maxWidth: .infinity)
+                        Divider()
+                        appMapping
+                    }
+                } else {
+                    // Keep the mapping columns readable on a narrow display.
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 0) {
+                            appMapping
+                            Divider()
+                            deviceStage.frame(width: 320)
+                        }
+                        .frame(height: geometry.size.height)
+                    }
+                    .defaultScrollAnchor(.leading)
+                }
             }
             .frame(maxHeight: .infinity)
         }
+    }
+
+    private var appMapping: some View {
+        HStack(spacing: 0) {
+            appRail.frame(width: Self.appRailWidth)
+            Divider()
+            mapping.frame(width: Self.mappingWidth)
+        }
+    }
+
+    private var appRail: some View {
+        VStack(spacing: 8) {
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(model.apps, id: \.bundleID) { app in
+                        let selected = app.bundleID == model.editingApp.bundleID
+                        let active = app.bundleID == model.activeBundleID
+                        Button { editApp(app) } label: {
+                            VStack(spacing: 4) {
+                                Group {
+                                    if let url = AgentRunner.appURL(app) {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().scaledToFit()
+                                    } else {
+                                        Image(systemName: "app.dashed").resizable().scaledToFit().foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(width: 32, height: 32)
+                                .accessibilityHidden(true)
+                                Text(app.displayName).font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                                if active {
+                                    Label(L10n.tr("生效中"), systemImage: "circle.fill")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 7)
+                            .frame(maxWidth: .infinity)
+                            .background(selected ? accent.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(selected ? [.isSelected] : [])
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.top, 8)
+            }
+            Button(action: chooseApp) {
+                Image(systemName: "plus")
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background {
+                        RoundedRectangle(cornerRadius: 7).strokeBorder(.secondary, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    }
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L10n.tr("添加应用…"))
+            .help(L10n.tr("添加应用…"))
+            .padding([.horizontal, .bottom], 8)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func editApp(_ app: AppTarget) {
+        guard app.bundleID != model.editingApp.bundleID else { return }
+        if model.hasConfigurationChanges { pendingApp = app }
+        else { model.addApp(app) }
+    }
+
+    private func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier else { return }
+        editApp(.init(bundleID: id, path: url.path))
     }
 
     @ViewBuilder
@@ -348,7 +464,7 @@ struct Workspace: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(L10n.tr("按键配置")).font(.callout.weight(.semibold))
+                    Text("\(model.editingApp.displayName) · \(L10n.tr("按键配置"))").font(.callout.weight(.semibold))
                     if let profile = model.profile {
                         Text(profile.id == AgentProfile.defaults.id ? L10n.format("%@ · 编辑后另存", profile.name) : profile.name)
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -491,19 +607,54 @@ struct Workspace: View {
         }
     }
 
+    @ViewBuilder
     private func mappingControl(_ key: RemoteKey, slot: String, gesture: String) -> some View {
+        if model.isGlobalSlot(slot) {
+            HStack(spacing: 5) {
+                if slot == key.id, let action = model.editableActions[slot] {
+                    Label(compactActionLabel(action), systemImage: action.mappingSymbol).lineLimit(1)
+                    Text(L10n.tr("全局")).font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Text("—").foregroundStyle(.secondary)
+                }
+            }
+            .font(mappingFont)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        } else {
+            editableMappingControl(key, slot: slot, gesture: gesture)
+        }
+    }
+
+    private func editableMappingControl(_ key: RemoteKey, slot: String, gesture: String) -> some View {
         let action = model.editableActions[slot]
-        let nativeNote = slot == key.id ? "" : L10n.tr("。macOS 仍可能响应实体键的原生操作。")
+        let inheritedVoice = slot == "voice" && action == nil ? model.defaultVoice : nil
+        let label = inheritedVoice.map { L10n.format("通用 · %@", $0.title) }
+            ?? action.map(compactActionLabel) ?? L10n.tr("无操作")
+        let nativeNote = slot == key.id || model.capturesKeyboard ? "" : L10n.tr("。macOS 仍可能响应实体键的原生操作。")
         return Menu {
             actionItem(nil, for: key, slot: slot)
-            Section("ChatGPT") {
-                actionItem(.openApp, for: key, slot: slot)
-                actionItem(.shortcut(AgentProfile.newChat), for: key, slot: slot)
-                actionItem(.shortcut(AgentProfile.sendDraft), for: key, slot: slot)
-                actionItem(.shortcut(AgentProfile.stop), for: key, slot: slot)
-                if slot == key.id {
-                    actionItem(.dictation, for: key, slot: slot)
-                        .disabled(model.editableActions[key.doubleSlot] != nil || model.editableActions[key.holdSlot] != nil)
+            Section(L10n.tr("应用快捷键")) {
+                Button(L10n.tr("录入应用快捷键…")) { sheet = .shortcut(slot: slot, provider: nil) }
+                if model.editingApp.bundleID == AppTarget.chatGPT.bundleID {
+                    actionItem(.shortcut(AgentProfile.newChat), for: key, slot: slot)
+                    actionItem(.shortcut(AgentProfile.sendDraft), for: key, slot: slot)
+                    actionItem(.shortcut(AgentProfile.stop), for: key, slot: slot)
+                }
+            }
+            if key.id == "voice" && slot == key.id {
+                Section(L10n.tr("语音入口")) {
+                    if model.editingApp.bundleID == AppTarget.chatGPT.bundleID {
+                        actionItem(.chatGPTDraft, for: key, slot: slot)
+                    }
+                    Button(VoiceProvider.macOS.title + "…") { sheet = .shortcut(slot: slot, provider: .macOS) }
+                }
+            }
+            if model.editingApp.bundleID == AppTarget.finder.bundleID {
+                Section(L10n.tr("访达导航")) {
+                    ForEach(FinderCommand.allCases, id: \.self) { command in
+                        actionItem(.finder(command), for: key, slot: slot)
+                    }
                 }
             }
             Section("macOS") {
@@ -527,10 +678,10 @@ struct Workspace: View {
                 }
             }
         } label: {
-            Label(action.map(compactActionLabel) ?? L10n.tr("无操作"), systemImage: action?.mappingSymbol ?? "minus.circle")
+            Label(label, systemImage: (action ?? inheritedVoice)?.mappingSymbol ?? "minus.circle")
+                .lineLimit(1)
                 .font(mappingFont)
                 .foregroundStyle(action == nil ? .secondary : .primary)
-                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
@@ -538,8 +689,8 @@ struct Workspace: View {
         .menuIndicator(.visible)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(L10n.format("%@%@的功能", String(describing: key.name), String(describing: gesture)))
-        .accessibilityValue(action.map(actionLabel) ?? L10n.tr("无操作"))
-        .help((action?.detail ?? action.map(actionLabel) ?? L10n.tr("无操作")) + nativeNote)
+        .accessibilityValue(label)
+        .help(((action ?? inheritedVoice)?.detail ?? label) + nativeNote)
     }
 
     private func actionItem(_ action: AgentAction?, for key: RemoteKey, slot: String) -> some View {
@@ -612,6 +763,34 @@ struct Workspace: View {
                 showConfigActions = false
                 importProfile()
             }
+            Menu(L10n.tr("通用语音入口")) {
+                Button(VoiceProvider.macOS.title + "…") {
+                    showConfigActions = false
+                    sheet = .shortcut(slot: nil, provider: .macOS)
+                }
+                Button(L10n.tr("清除通用语音入口")) { model.setDefaultVoice(nil) }
+                    .disabled(model.defaultVoice == nil)
+            }
+            .padding(.horizontal, 7)
+            if model.supportsRemoteMicrophone {
+                WorkspacePopoverAction(L10n.tr(model.usesRemoteMicrophone ? "停用遥控器麦克风" : "启用遥控器麦克风")) {
+                    model.toggleRemoteMicrophone()
+                }
+                if let status = model.remoteMicrophone.status {
+                    Text(status).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 7)
+                }
+            }
+            if !model.unassignedProfiles.isEmpty {
+                Menu(L10n.tr("将旧配置分配给此应用")) {
+                    ForEach(model.unassignedProfiles) { profile in
+                        Button(profile.name) {
+                            if model.assignProfile(profile.id) { showConfigActions = false }
+                        }
+                    }
+                }
+                .padding(.horizontal, 7)
+                .disabled(model.hasConfigurationChanges)
+            }
             Divider()
             WorkspacePopoverAction(model.learning == nil ? L10n.tr("手动校准当前键…") : L10n.tr("取消校准")) {
                 showConfigActions = false
@@ -634,6 +813,21 @@ struct Workspace: View {
         if let error = model.storageError ?? model.error { return error }
         if model.learning == key.id { return L10n.format("请按一下遥控器上的「%@」。", String(describing: key.name)) }
         if model.hasConfigurationChanges { return model.feedback ?? L10n.tr("有未保存的更改。") }
+        if action == .chatGPTDraft {
+            return L10n.tr("将 ChatGPT 的按住听写快捷键设为 F5。已配置，需在草稿中确认识别结果。")
+        }
+        if case let .voiceShortcut(provider, shortcut) = action ?? (key.id == "voice" ? model.defaultVoice : nil) {
+            if captureUnavailable {
+                return L10n.tr("当前设备无法可靠改绑，已保留原生按键。")
+            }
+            return L10n.format("%@ · %@ · 已配置，转写待验证", provider.title, shortcut.label)
+        }
+        if case .finder = action {
+            if captureUnavailable {
+                return L10n.tr("当前设备无法可靠改绑，已保留原生按键。")
+            }
+            return model.feedback ?? L10n.tr("访达导航适用于列表和图标视图。")
+        }
         if action == .dictation, learned?.isKeyboardF5 ?? (key.id == "voice") {
             return L10n.tr("在 ChatGPT 中将「听写快捷键」设为 F5，并解除「点按一次听写」的回车绑定。按住麦克风键说话，松开后转写，按「确定」发送。")
         }
@@ -644,6 +838,10 @@ struct Workspace: View {
             return L10n.format("在 Codex 对话中，按住遥控器的%@说话，松开后发送。", String(describing: button))
         }
         return model.feedback
+    }
+
+    private var captureUnavailable: Bool {
+        model.canReadKeys && model.isEnabled && !model.isDiagnosing && !model.capturesKeyboard
     }
 
     private func systemShortcuts(for key: RemoteKey, slot: String) -> some View {
@@ -733,6 +931,10 @@ struct Workspace: View {
     private func nameSheet(archive: ProfileArchive?) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(archive == nil ? L10n.tr("保存为自定义配置") : L10n.tr("导入为自定义配置")).font(.headline)
+            if let archive {
+                Text(L10n.format("导入到 %@", model.importTarget(for: archive).displayName))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             TextField(L10n.tr("配置名称"), text: $profileName)
             if archive != nil && model.hasConfigurationChanges {
                 Toggle(L10n.tr("放弃当前未保存的更改"), isOn: $approveImportDiscard)
@@ -740,7 +942,7 @@ struct Workspace: View {
             if let error = model.storageError ?? model.error { Text(error).font(.caption).foregroundStyle(.red) }
             HStack {
                 Spacer()
-                Button(L10n.tr("取消")) { sheet = nil }.keyboardShortcut(.cancelAction)
+                Button(L10n.tr("取消")) { appAfterSave = nil; sheet = nil }.keyboardShortcut(.cancelAction)
                 Button(L10n.tr("保存配置")) {
                     let saved: Bool
                     if let archive {
@@ -748,7 +950,11 @@ struct Workspace: View {
                     } else {
                         saved = model.saveConfigurationChanges(as: profileName)
                     }
-                    if saved { sheet = nil }
+                    if saved {
+                        if let appAfterSave { model.addApp(appAfterSave) }
+                        appAfterSave = nil
+                        sheet = nil
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(archive != nil && model.hasConfigurationChanges && !approveImportDiscard)
@@ -756,6 +962,23 @@ struct Workspace: View {
         }
         .padding(18)
         .frame(width: 350)
+        .onDisappear { appAfterSave = nil }
+    }
+
+    private func shortcutSheet(slot: String?, provider: VoiceProvider?) -> some View {
+        ShortcutSetup(
+            title: provider?.title ?? L10n.tr("录入应用快捷键"),
+            instructions: provider == .macOS
+                ? L10n.tr("在系统键盘设置中开启听写并设定组合键，再录入相同的组合键。请在文本编辑中确认转写。")
+                : L10n.tr("按下目标应用使用的快捷键。"),
+            needsCombination: provider != nil,
+            cancel: { sheet = nil },
+            save: { shortcut in
+                if let slot {
+                    model.setAction(provider.map { .voiceShortcut($0, shortcut) } ?? .shortcut(shortcut), for: slot)
+                } else if let provider, !model.setDefaultVoice(.voiceShortcut(provider, shortcut)) { return }
+                sheet = nil
+            })
     }
 
     private func exportProfile() {
@@ -888,13 +1111,15 @@ extension RemoteModel.HardwarePress.Phase {
 private extension AgentAction {
     var mappingSymbol: String {
         switch self {
-        case .openApp: "bubble.left"
+        case .openApp: "app"
+        case .openFinder: "folder"
         case .openLink: "link"
         case .shortcut, .systemShortcut: "command"
         case .foregroundKey: "keyboard"
         case .chatBar: "text.bubble"
         case .nextAgent, .appSwitcher: "rectangle.on.rectangle"
-        case .dictation: "mic"
+        case .dictation, .chatGPTDraft, .voiceShortcut: "mic"
+        case .finder: "arrow.up.and.down.and.arrow.left.and.right"
         case .displaySleep, .toggleDisplays: "display"
         case .appleMenu: "apple.logo"
         case .lockScreen: "lock"

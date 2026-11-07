@@ -12,6 +12,7 @@ struct SetupGuide: View {
     let finish: () -> Void
     @State private var stage: SetupStage
     @State private var waitsForRemoteOnResume: Bool
+    @State private var voiceDriverReady = false
     @AccessibilityFocusState private var headingFocused: Bool
 
     init(model: RemoteModel, library: ResourceLibrary, stage: SetupStage,
@@ -41,9 +42,9 @@ struct SetupGuide: View {
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityFocused($headingFocused)
                 Spacer()
-                Text("\(stage.rawValue + 1) / \(SetupStage.allCases.count)")
+                Text("\(stage.position + 1) / \(SetupStage.allCases.count)")
                     .monospacedDigit().foregroundStyle(.secondary)
-                    .accessibilityLabel(L10n.format("第 %d 步，共 %d 步", stage.rawValue + 1, SetupStage.allCases.count))
+                    .accessibilityLabel(L10n.format("第 %d 步，共 %d 步", stage.position + 1, SetupStage.allCases.count))
             }
             .padding(.horizontal, 28)
             .padding(.top, 22)
@@ -51,6 +52,7 @@ struct SetupGuide: View {
             Group {
                 switch stage {
                 case .welcome: SetupBanner()
+                case .voiceDriver: voiceDriver
                 case .remote: SetupRemoteStep(model: model, library: library)
                 case .permissions: permissions
                 case .ready: ready
@@ -77,13 +79,20 @@ struct SetupGuide: View {
                 headingFocused = true
             }
         }
+        .task(id: stage) {
+            guard stage == .voiceDriver else { return }
+            while !Task.isCancelled {
+                voiceDriverReady = BlackHoleDevice.currentID() != nil
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
             Button(L10n.tr("稍后继续"), action: deferSetup)
             Spacer()
-            if let previous = SetupStage(rawValue: stage.rawValue - 1) {
+            if let previous = stage.adjacent(-1) {
                 Button(L10n.tr("上一步")) { stage = previous }
             }
             Button(primaryTitle, action: advance)
@@ -98,6 +107,7 @@ struct SetupGuide: View {
     private var primaryTitle: String {
         switch stage {
         case .welcome: L10n.tr("开始设置")
+        case .voiceDriver: L10n.tr(voiceDriverReady ? "继续" : "跳过此步")
         case .remote, .permissions: L10n.tr("继续")
         case .ready: L10n.tr("配置第一个按键")
         }
@@ -105,7 +115,7 @@ struct SetupGuide: View {
 
     private var canAdvance: Bool {
         switch stage {
-        case .welcome: true
+        case .welcome, .voiceDriver: true
         case .remote: readiness.connected
         case .permissions, .ready: readiness.canFinish
         }
@@ -113,8 +123,35 @@ struct SetupGuide: View {
 
     private func advance() {
         guard canAdvance else { return }
-        if let next = SetupStage(rawValue: stage.rawValue + 1) { stage = next }
+        if let next = stage.adjacent(1) { stage = next }
         else { finish() }
+    }
+
+    private var voiceDriver: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("BlackHole 2ch", systemImage: "waveform")
+                .font(.title2.bold())
+            Text(L10n.tr("用遥控器机身麦克风听写时，BlackHole 2ch 会把遥控器音频交给语音应用。只使用按键或 Mac 麦克风时，可以跳过。"))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.tr("1. 从 Existential Audio 下载 BlackHole 2ch。"))
+                Text(L10n.tr("2. 打开安装包，用 Mac 管理员权限完成安装。"))
+                Text(L10n.tr("3. 重启 Mac，再打开无限遥控器。引导会回到此页并重新检测。"))
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 14) {
+                Link(L10n.tr("下载 BlackHole 2ch"), destination: URL(string: "https://existential.audio/downloads/BlackHole2ch-0.7.1.pkg")!)
+                    .buttonStyle(.borderedProminent)
+                Link(L10n.tr("打开官方下载页"), destination: URL(string: "https://existential.audio/blackhole/")!)
+                Button(L10n.tr("重新检查")) { voiceDriverReady = BlackHoleDevice.currentID() != nil }
+            }
+            Label(L10n.tr(voiceDriverReady ? "已检测到 BlackHole 2ch" : "尚未检测到 BlackHole 2ch"),
+                  systemImage: voiceDriverReady ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(voiceDriverReady ? Color.green : Color.secondary)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var permissions: some View {
@@ -205,6 +242,7 @@ private struct SetupRemoteStep: View {
     let library: ResourceLibrary
     @State private var selectedID: String?
     @State private var installTask: Task<Void, Never>?
+    @State private var bluetoothAuthorized = false
 
     private var source: RemoteSubscription? { library.sources.first(where: \.isDefault) }
     private var listings: [RemoteListing] { source?.catalog?.models ?? [] }
@@ -252,10 +290,26 @@ private struct SetupRemoteStep: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            if model.supportsRemoteMicrophone, BlackHoleDevice.currentID() != nil {
+                HStack(spacing: 10) {
+                    Label(L10n.tr(bluetoothAuthorized ? "语音蓝牙已授权" : "机身麦克风需要蓝牙权限"),
+                          systemImage: bluetoothAuthorized ? "checkmark.circle.fill" : "mic")
+                        .foregroundStyle(bluetoothAuthorized ? Color.green : Color.secondary)
+                    if !bluetoothAuthorized {
+                        Button(L10n.tr("授权…"), action: model.requestVoiceBluetooth)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             if !model.hasRemote, let source, source.catalog == nil { await library.refresh(source.id) }
+        }
+        .task {
+            while !Task.isCancelled {
+                bluetoothAuthorized = RemoteMicrophone.isBluetoothAuthorized
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
         .onDisappear { installTask?.cancel() }
     }

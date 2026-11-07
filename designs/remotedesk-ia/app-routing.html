@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>无限遥控器 · 按应用配置</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230066cc'/%3E%3C/svg%3E">
+<style>
+:root{color-scheme:light;--paper:#f5f5f7;--ink:#1d1d1f;--muted:#63636a;--rule:#d4d4da;--accent:#0066cc;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:var(--ink);background:white}
+*{box-sizing:border-box}body{margin:0}main{max-width:1440px;margin:auto;padding:56px clamp(16px,5vw,72px) 72px}
+header{max-width:48rem;margin-bottom:44px}.kicker{font-size:.78rem;font-weight:700;letter-spacing:.1em;color:var(--accent)}
+h1{font-size:clamp(32px,5vw,56px);line-height:1.15;margin:.3em 0}.intro,figcaption{color:var(--muted);line-height:1.65}
+section{border-top:1px solid var(--rule);padding-top:18px;margin-top:36px}h2{font-size:24px;margin:0 0 12px}
+figure{margin:0}.canvas{overflow-x:auto;max-width:100%;border:1px solid var(--rule);border-radius:10px}
+svg{display:block;width:100%;min-width:var(--canvas)}figcaption{padding:8px 0}
+text{fill:var(--ink)}.node{font-size:19px;font-weight:650}.small{fill:var(--muted);font-size:15px}
+.eyebrow{fill:var(--muted);font-weight:650;font-size:13px;letter-spacing:.075em}
+.connector{fill:none;stroke:var(--muted);stroke-width:1.5}.connector.accent{stroke:var(--accent);stroke-width:2}.connector.link{stroke:#345879}
+@media print{main{padding:0}.canvas{overflow:visible}svg{min-width:0}section{break-inside:avoid}}
+</style>
+</head>
+<body>
+<main>
+<header><p class="kicker">无限遥控器 / 设计图稿</p><h1>按前台应用配置快捷键</h1>
+<p class="intro">主页统一打开访达。每个应用保存自己的按键动作，工作台可以编辑任一应用的配置。</p></header>
+<section><h2>动作怎样找到目标</h2><figure><div class="canvas" style="--canvas:1280px">
+<svg viewBox="0 0 1280 720" role="img" aria-labelledby="app-routing-runtime-title app-routing-runtime-desc" xmlns="http://www.w3.org/2000/svg"><title id="app-routing-runtime-title">按前台应用路由遥控器</title>
+<desc id="app-routing-runtime-desc">型号包定义实体键，工作台按应用保存映射，运行时依据前台上下文将动作送往 Finder、应用快捷键、语音或全局入口。</desc>
+<defs><marker id="app-routing-runtime-muted" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#63636a"/></marker><marker id="app-routing-runtime-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#0066cc"/></marker><marker id="app-routing-runtime-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#345879"/></marker></defs>
+<rect x="0" y="0" width="1280" height="720" rx="0" fill="#f5f5f7" stroke="none"/>
+<text x="56" y="56" class="eyebrow">硬件输入</text>
+<text x="520" y="56" class="eyebrow">应用运行时</text>
+<text x="968" y="56" class="eyebrow">动作与目标</text>
+<path d="M 264 332 H 316" class="connector muted" marker-end="url(#app-routing-runtime-muted)"/>
+<path d="M 476 332 H 520" class="connector accent" marker-end="url(#app-routing-runtime-accent)"/>
+<path d="M 640 204 V 280" class="connector muted" marker-end="url(#app-routing-runtime-muted)"/>
+<path d="M 760 301 H 848 Q 856 301 856 293 V 160 Q 856 152 864 152 H 968" class="connector muted" marker-end="url(#app-routing-runtime-muted)"/>
+<path d="M 760 322 H 888 Q 896 322 896 314 V 264 Q 896 256 904 256 H 968" class="connector accent" marker-end="url(#app-routing-runtime-accent)"/>
+<path d="M 760 342 H 912 Q 920 342 920 350 V 352 Q 920 360 928 360 H 968" class="connector muted" marker-end="url(#app-routing-runtime-muted)"/>
+<path d="M 760 363 H 848 Q 856 363 856 371 V 456 Q 856 464 864 464 H 968" class="connector muted" marker-end="url(#app-routing-runtime-muted)"/>
+<rect x="56" y="292" width="208" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="72" y="324" class="node">小米遥控器 2 Pro</text>
+<text x="72" y="348" class="small">型号包与设备校准</text>
+<rect x="316" y="292" width="160" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="332" y="324" class="node">手势判定</text>
+<text x="332" y="348" class="small">按下、松开和计时</text>
+<rect x="520" y="280" width="240" height="104" rx="8" fill="#e9f2ff" stroke="#0066cc"/>
+<text x="536" y="312" class="node">按前台应用路由</text>
+<text x="536" y="336" class="small">型号 × bundle ID</text>
+<rect x="520" y="124" width="240" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="536" y="156" class="node">工作台保存配置</text>
+<text x="536" y="180" class="small">编辑对象由用户选择</text>
+<rect x="968" y="112" width="256" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="984" y="144" class="node">全局键</text>
+<text x="984" y="168" class="small">Finder、应用切换、媒体</text>
+<rect x="968" y="216" width="256" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="984" y="248" class="node">Finder 导航</text>
+<text x="984" y="272" class="small">列表、图标、边栏</text>
+<rect x="968" y="320" width="256" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="984" y="352" class="node">应用快捷键</text>
+<text x="984" y="376" class="small">发送到仍在前台的应用</text>
+<rect x="968" y="424" width="256" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="984" y="456" class="node">语音入口</text>
+<text x="984" y="480" class="small">按住说话或启停</text>
+<rect x="56" y="552" width="1168" height="64" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="76" y="592" class="node">原生输入回退</text>
+<text x="260" y="592" class="small">设备无法接管时保留原生按键，避免一次按键同时触发两个动作。</text>
+<line x1="56" x2="1224" y1="656" y2="656" stroke="#d4d4da"/>
+<text x="56" y="688" class="small">蓝色 · 前台应用路由与 Finder 路径</text>
+</svg>
+</div><figcaption>切换窗口或应用时取消未完成的手势。设备接管失败时保留原生行为。</figcaption></figure></section>
+<section><h2>语音从哪里进入</h2><figure><div class="canvas" style="--canvas:1280px">
+<svg viewBox="0 0 1280 420" role="img" aria-labelledby="app-routing-voice-title app-routing-voice-desc" xmlns="http://www.w3.org/2000/svg"><title id="app-routing-voice-title">语音触发与音源</title>
+<desc id="app-routing-voice-desc">快捷键和音源各自接入语音识别入口。首版由现有麦克风拾音，ATVV 音频桥接是后续阶段。</desc>
+<defs><marker id="app-routing-voice-muted" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#63636a"/></marker><marker id="app-routing-voice-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#0066cc"/></marker><marker id="app-routing-voice-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#345879"/></marker></defs>
+<rect x="0" y="0" width="1280" height="420" rx="0" fill="#f5f5f7" stroke="none"/>
+<text x="56" y="58" class="eyebrow">按键链路</text>
+<text x="56" y="214" class="eyebrow">音频链路</text>
+<path d="M 264 120 H 368" class="connector muted" marker-end="url(#app-routing-voice-muted)"/>
+<path d="M 592 120 H 728" class="connector accent" marker-end="url(#app-routing-voice-accent)"/>
+<path d="M 1000 120 H 1072" class="connector muted" marker-end="url(#app-routing-voice-muted)"/>
+<path d="M 592 270 H 856 Q 864 270 864 262 V 160" class="connector muted" marker-end="url(#app-routing-voice-muted)"/>
+<path d="M 264 270 H 368" class="connector muted" marker-end="url(#app-routing-voice-muted)" stroke-dasharray="5 4"/>
+<rect x="56" y="80" width="208" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="72" y="112" class="node">遥控器语音键</text>
+<text x="72" y="136" class="small">HID 按下和松开</text>
+<rect x="368" y="80" width="224" height="80" rx="8" fill="#e9f2ff" stroke="#0066cc"/>
+<text x="384" y="112" class="node">语音快捷键</text>
+<text x="384" y="136" class="small">ChatGPT F5 或用户组合键</text>
+<rect x="728" y="80" width="272" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="744" y="112" class="node">识别入口</text>
+<text x="744" y="136" class="small">ChatGPT、macOS 听写</text>
+<rect x="1072" y="80" width="152" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="1088" y="112" class="node">转写结果</text>
+<text x="1088" y="136" class="small">草稿或文本框</text>
+<rect x="368" y="230" width="224" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="384" y="262" class="node">已选麦克风</text>
+<text x="384" y="286" class="small">首版使用 Mac 或外接音源</text>
+<rect x="56" y="230" width="208" height="80" rx="8" fill="#fff" stroke="#d4d4da"/>
+<text x="72" y="262" class="node">机身拾音 · 后续</text>
+<text x="72" y="286" class="small">ATVV 解码与音频桥接</text>
+<line x1="56" x2="1224" y1="352" y2="352" stroke="#d4d4da"/>
+<text x="56" y="386" class="small">实线 · 首版验证路径　　虚线 · 后续音源接入</text>
+</svg>
+</div><figcaption>配置快捷键后，还要在目标输入框验证启停、实际音源和文字上屏。</figcaption></figure></section>
+<section><h2>工作台右侧窗格</h2><figure><div class="canvas" style="--canvas:960px">
+<svg viewBox="0 0 960 540" role="img" aria-labelledby="app-routing-workbench-title app-routing-workbench-desc" xmlns="http://www.w3.org/2000/svg"><title id="app-routing-workbench-title">工作台配置窗格线框</title>
+<desc id="app-routing-workbench-desc">应用图标在名称上方，左栏底部添加应用。右栏保留现有三种手势和保存区，分别显示正在编辑与运行中生效的应用。</desc>
+<defs><marker id="app-routing-workbench-muted" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#63636a"/></marker><marker id="app-routing-workbench-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#0066cc"/></marker><marker id="app-routing-workbench-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#345879"/></marker></defs>
+<rect x="0" y="0" width="960" height="540" rx="0" fill="#f5f5f7" stroke="none"/>
+<rect x="56" y="44" width="848" height="448" rx="8" fill="#fff" stroke="#d4d4da"/>
+<rect x="56" y="44" width="100" height="448" rx="8" fill="#eef0f3" stroke="#d4d4da"/>
+<rect x="64" y="60" width="84" height="76" rx="8" fill="#e9f2ff" stroke="#0066cc"/>
+<text x="80" y="122" class="node">访达</text>
+<rect x="86" y="69" width="36" height="30" rx="8" fill="#0066cc"/><path d="M 93 84 h 3 M 111 84 h 3 M 96 90 q 7 5 14 0" fill="none" stroke="white" stroke-width="2"/>
+<rect x="64" y="146" width="84" height="84" rx="8" fill="#fff" stroke="#d4d4da"/>
+<circle cx="105" cy="172" r="14" fill="#1d1d1f"/>
+<text x="76" y="206" class="small">ChatGPT</text>
+<text x="80" y="223" class="small">生效中</text>
+<rect x="66" y="440" width="80" height="40" rx="8" fill="#fff" stroke="#63636a" stroke-dasharray="5 4"/>
+<text x="99" y="465" class="node">＋</text>
+<text x="180" y="86" class="node">访达 · 按键配置</text>
+<text x="180" y="112" class="small">正在编辑 · 默认配置</text>
+<text x="180" y="152" class="eyebrow">按键</text>
+<text x="348" y="152" class="eyebrow">单击</text>
+<text x="540" y="152" class="eyebrow">双击</text>
+<text x="752" y="152" class="eyebrow">长按</text>
+<line x1="180" x2="880" y1="164" y2="164" stroke="#d4d4da"/>
+<text x="180" y="186" class="small">方向上</text>
+<text x="348" y="186" class="small">向上选择</text>
+<text x="540" y="186" class="small">上一页</text>
+<text x="752" y="186" class="small">持续选择</text>
+<line x1="180" x2="880" y1="197" y2="197" stroke="#d4d4da"/>
+<text x="180" y="219" class="small">方向下</text>
+<text x="348" y="219" class="small">向下选择</text>
+<text x="540" y="219" class="small">下一页</text>
+<text x="752" y="219" class="small">持续选择</text>
+<line x1="180" x2="880" y1="230" y2="230" stroke="#d4d4da"/>
+<text x="180" y="252" class="small">方向左</text>
+<text x="348" y="252" class="small">向左选择</text>
+<text x="540" y="252" class="small">聚焦边栏</text>
+<text x="752" y="252" class="small">持续选择</text>
+<line x1="180" x2="880" y1="263" y2="263" stroke="#d4d4da"/>
+<text x="180" y="285" class="small">方向右</text>
+<text x="348" y="285" class="small">向右选择</text>
+<text x="540" y="285" class="small">聚焦内容</text>
+<text x="752" y="285" class="small">持续选择</text>
+<line x1="180" x2="880" y1="296" y2="296" stroke="#d4d4da"/>
+<text x="180" y="318" class="small">确认</text>
+<text x="348" y="318" class="small">打开所选项目</text>
+<text x="540" y="318" class="small">所选项目的右键菜单</text>
+<text x="752" y="318" class="small">—</text>
+<line x1="180" x2="880" y1="329" y2="329" stroke="#d4d4da"/>
+<text x="180" y="351" class="small">返回</text>
+<text x="348" y="351" class="small">Esc</text>
+<text x="540" y="351" class="small">—</text>
+<text x="752" y="351" class="small">—</text>
+<line x1="180" x2="880" y1="362" y2="362" stroke="#d4d4da"/>
+<text x="180" y="384" class="small">主页 · 全局</text>
+<text x="348" y="384" class="small">打开访达</text>
+<text x="540" y="384" class="small">—</text>
+<text x="752" y="384" class="small">—</text>
+<line x1="180" x2="880" y1="395" y2="395" stroke="#d4d4da"/>
+<text x="180" y="417" class="small">语音</text>
+<text x="348" y="417" class="small">继承通用入口</text>
+<text x="540" y="417" class="small">—</text>
+<text x="752" y="417" class="small">—</text>
+<rect x="776" y="444" width="104" height="32" rx="6" fill="#e9f2ff" stroke="#0066cc"/>
+<text x="800" y="465" class="small">保存更改</text>
+</svg>
+</div><figcaption>蓝框标出正在编辑的应用。「生效中」独立反映前台应用。示意表仅展示部分按键。</figcaption></figure></section>
+</main>
+</body>
+</html>

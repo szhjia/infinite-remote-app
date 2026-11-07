@@ -31,5 +31,7 @@
 	<true/>
 	<key>NSInputMonitoringUsageDescription</key>
 	<string>Infinite Remote reads button signals from your selected remote to configure keys and trigger actions.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Infinite Remote connects to your selected remote to transmit its microphone audio when you hold the voice button.</string>
 </dict>
 </plist>

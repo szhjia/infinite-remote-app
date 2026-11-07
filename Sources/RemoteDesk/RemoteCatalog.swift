@@ -148,9 +148,14 @@ struct RemoteDefinition {
     var actionSlots: Set<String> { Set(layout.keys.flatMap(\.actionSlots)) }
 
     func accepts(actions: [String: AgentAction]) -> Bool {
-        actions.keys.allSatisfy(actionSlots.contains) && layout.keys.allSatisfy { key in
-            let variants = [actions[key.doubleSlot], actions[key.holdSlot]]
-            return !variants.contains(.dictation) && (actions[key.id] != .dictation || variants.allSatisfy { $0 == nil })
+        actions.keys.allSatisfy(actionSlots.contains)
+            && !actions.values.contains(where: \.isRemovedVoiceBinding)
+            && layout.keys.allSatisfy { key in
+            let variants = [actions[key.doubleSlot], actions[key.holdSlot]].compactMap { $0 }
+            guard !variants.contains(where: \.isVoiceTrigger) else { return false }
+            guard let primary = actions[key.id], primary.isVoiceTrigger else { return true }
+            if case let .voiceShortcut(_, shortcut) = primary, !shortcut.isVoiceCombination { return false }
+            return variants.isEmpty
         }
     }
     func slot(for input: InputCode) -> String? { inputs.first { $0.matches(input) }?.key }

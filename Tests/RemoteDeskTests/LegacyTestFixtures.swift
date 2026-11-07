@@ -35,8 +35,11 @@ func fixtureRemoteModel(hid: any RemoteInputSource, storeURL: URL,
                         doubleClickDelay: Duration = .milliseconds(300),
                         runAction: @escaping @MainActor (AgentAction, AppTarget?) async throws -> Void) -> RemoteModel {
     _ = fixtureCatalog(directory: storeURL.deletingLastPathComponent().appending(path: "RemoteModels"))
-    return RemoteModel(hid: hid, storeURL: storeURL, dictation: dictation, permissions: permissions,
-                       powerHoldDelay: powerHoldDelay, doubleClickDelay: doubleClickDelay, runAction: runAction)
+    let model = RemoteModel(hid: hid, storeURL: storeURL, dictation: dictation, permissions: permissions,
+                            powerHoldDelay: powerHoldDelay, doubleClickDelay: doubleClickDelay,
+                            foreground: { .init(bundleID: AppTarget.chatGPT.bundleID, pid: 123) }, runAction: runAction)
+    model.selectEditingApp(.chatGPT)
+    return model
 }
 
 /// v9 makes the formerly implicit legacy profile association explicit.
@@ -44,6 +47,10 @@ func fixtureRemoteModel(hid: any RemoteInputSource, storeURL: URL,
 func legacyModelProfile(_ profile: AgentProfile) -> AgentProfile {
     var profile = profile
     profile.modelID = RemoteDefinition.xiaomiID
-    if profile.id == AgentProfile.defaults.id { profile.name = L10n.tr("默认配置") }
+    if profile.id == AgentProfile.defaults.id {
+        profile.name = L10n.tr("默认配置")
+        profile.actions["home"] = .openFinder
+        profile.actions["voice"] = .chatGPTDraft
+    }
     return profile
 }

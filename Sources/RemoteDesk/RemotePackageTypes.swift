@@ -125,6 +125,8 @@ extension AgentAction {
             return true
         case .chatBar, .nextAgent:
             return protocolVersion == 1
+        case .openFinder, .finder, .chatGPTDraft, .voiceShortcut:
+            return false // These actions belong to the host's per-app configuration.
         case .openApp, .dictation, .displaySleep, .toggleDisplays, .appleMenu,
              .lockScreen, .showDesktop, .volumeUp, .volumeDown, .mediaChooser, .appSwitcher:
             return true

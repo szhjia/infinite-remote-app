@@ -20,7 +20,7 @@ struct RemoteDeskApp: App {
         Settings {
             AppSettingsView(model: windows.model, library: windows.resourceLibrary,
                             mediaSettings: windows.mediaSettings, pane: $windows.settingsPane,
-                            showSetup: windows.showSetup, previewMedia: windows.showMediaPreview)
+                            showSetup: windows.startSetupFromSettings, previewMedia: windows.showMediaPreview)
                 .frame(width: 600, height: 410)
         }
     }
@@ -100,6 +100,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private var remote: NSWindow?
     private var windowEventMonitor: Any?
+    private var foregroundObserver: ForegroundObserver?
     private var configuration: NSWindow?
     private var isTerminating = false
     private static let remoteModelVisibilityKey = "RemoteDesk.remoteModelVisible"
@@ -123,6 +124,10 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         model.onDismissMedia = { [weak self] in self?.mediaLauncher.dismiss() }
         mediaLauncher.onError = { [weak self] message in self?.model.reportError(message) }
+        foregroundObserver = ForegroundObserver { [weak self] in
+            AgentRunner.finder.reset()
+            self?.model.foregroundChanged()
+        }
         windowEventMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.keyDown, .keyUp, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
         ) { [weak self] event in
@@ -150,6 +155,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         model.refreshPermissions()
+        foregroundObserver?.observeWindow()
     }
 
     func applicationDidHide(_ notification: Notification) {
@@ -161,6 +167,9 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        model.stopResponding()
+        foregroundObserver?.stop()
+        AgentRunner.finder.reset()
         if let windowEventMonitor { NSEvent.removeMonitor(windowEventMonitor) }
         mediaLauncher.dismiss()
     }
@@ -324,7 +333,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configurationWindow() -> NSWindow {
         if let configuration { return configuration }
         let window = titledWindow(workspacePage.title, size: Workspace.windowSize,
-                                  extraStyle: .fullSizeContentView, resizable: false,
+                                  extraStyle: .fullSizeContentView,
                                   content: Workspace(model: model, library: resourceLibrary,
                                       page: Binding(get: { [weak self] in self?.workspacePage ?? .remote },
                                                     set: { [weak self] in self?.workspacePage = $0 }),
@@ -363,8 +372,19 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ])
         }
         window.collectionBehavior.insert(.fullScreenNone)
+        window.contentMinSize = NSSize(width: 890, height: 520)
         configuration = window
         return window
+    }
+
+    func startSetupFromSettings() {
+        if setupWindow == nil && !needsInitialSetup {
+            SetupStartup.begin(in: .standard)
+            SetupStartup.save(.welcome, in: .standard)
+            needsInitialSetup = true
+            didDeferSetup = false
+        }
+        showSetup()
     }
 
     func showSetup() {

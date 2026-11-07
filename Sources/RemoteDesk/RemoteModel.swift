@@ -68,6 +68,7 @@ final class RemoteModel {
         let origin: RemoteInputOrigin?
         let started: ContinuousClock.Instant
         let secondTap: Bool
+        let context: ForegroundContext?
         var firedHold = false
         var holdTask: Task<Void, Never>?
     }
@@ -76,6 +77,7 @@ final class RemoteModel {
         let input: InputCode
         let origin: RemoteInputOrigin?
         let deadline: ContinuousClock.Instant
+        let context: ForegroundContext?
         let task: Task<Void, Never>
     }
 
@@ -95,6 +97,12 @@ final class RemoteModel {
     private(set) var canListen = false
     private(set) var canPost = false
     private(set) var canUseAccessibility = false
+    private(set) var capturesKeyboard = false
+    private(set) var usesRemoteMicrophone = false
+    let remoteMicrophone = RemoteMicrophone()
+    private(set) var activeBundleID: String?
+    private var contextGeneration = 0
+    private var editingBundleID: String?
     var shortcutsNeedRestart: Bool { canUseAccessibility && !canPost }
     var requestedPermission: PermissionKind?
     private(set) var hardwarePress: HardwarePress?
@@ -110,6 +118,7 @@ final class RemoteModel {
                 cancelGestures()
                 onDismissMedia?()
             }
+            updateCapture()
         }
     }
     private(set) var isDiagnosing = false
@@ -123,6 +132,11 @@ final class RemoteModel {
     private var catalog: RemoteCatalog
     var onModelChanged: (() -> Void)?
     private let runAction: @MainActor (AgentAction, AppTarget?) async throws -> Void
+    private let foreground: @MainActor () -> ForegroundContext?
+    private let finderSupportsNavigation: @MainActor (ForegroundContext) -> Bool
+    private let postVoice: @MainActor (KeyboardShortcut, Bool) throws -> Void
+    private var heldVoice: (input: InputCode, origin: RemoteInputOrigin?, shortcut: KeyboardShortcut)?
+    private var microphonePress: (input: InputCode, origin: RemoteInputOrigin?, context: ForegroundContext)?
     private var draftActions: [String: AgentAction]?
     private var draftRemotes: [DeviceID: RemoteMap] = [:]
     private var canSave = true
@@ -149,8 +163,10 @@ final class RemoteModel {
         let directory = ProcessInfo.processInfo.environment["INFINITE_REMOTE_DATA_DIR"].map {
             URL(fileURLWithPath: $0, isDirectory: true)
         } ?? URL.applicationSupportDirectory.appending(path: "RemoteDesk", directoryHint: .isDirectory)
-        self.init(hid: HIDMonitor(), storeURL: directory.appending(path: "configuration.json"),
-                  runAction: AgentRunner.run)
+        self.init(hid: HIDMonitor(recoveryURL: directory.appending(path: "keyboard-capture.json")),
+                  storeURL: directory.appending(path: "configuration.json"),
+                  foreground: ForegroundContext.current, finderSupportsNavigation: AgentRunner.finder.supports,
+                  postVoice: AgentRunner.postVoiceEdge, runAction: AgentRunner.run)
     }
 
     init(hid: any RemoteInputSource, storeURL: URL,
@@ -158,6 +174,9 @@ final class RemoteModel {
          permissions: PermissionAccess = .system,
          powerHoldDelay: Duration = .milliseconds(600),
          doubleClickDelay: Duration = .milliseconds(300),
+         foreground: @escaping @MainActor () -> ForegroundContext? = ForegroundContext.current,
+         finderSupportsNavigation: @escaping @MainActor (ForegroundContext) -> Bool = { _ in true },
+         postVoice: @escaping @MainActor (KeyboardShortcut, Bool) throws -> Void = AgentRunner.postVoiceEdge,
          runAction: @escaping @MainActor (AgentAction, AppTarget?) async throws -> Void) {
         self.dictation = dictation
         self.permissionAccess = permissions
@@ -169,6 +188,10 @@ final class RemoteModel {
         self.catalog = RemoteCatalog(directory: storeURL.deletingLastPathComponent()
             .appending(path: "RemoteModels", directoryHint: .isDirectory))
         self.runAction = runAction
+        self.foreground = foreground
+        self.finderSupportsNavigation = finderSupportsNavigation
+        self.postVoice = postVoice
+        self.activeBundleID = foreground()?.bundleID
         self.powerHoldDelay = powerHoldDelay
         self.doubleClickDelay = doubleClickDelay
         var didUpgrade = false
@@ -203,6 +226,11 @@ final class RemoteModel {
         hid.onAmbiguousDevices = { [weak self] devices in self?.updateAmbiguity(devices) }
         hid.onMonitorState = { [weak self] state in self?.updateMonitorState(state) }
         hid.onEvent = { [weak self] device, event in self?.receive(device, event) }
+        hid.onKeyboardCapture = { [weak self] capture in self?.capturesKeyboard = capture }
+        remoteMicrophone.canStream = { [weak self] in
+            guard let self, usesRemoteMicrophone, let press = microphonePress else { return false }
+            return press.context.matches(foreground())
+        }
         if didUpgrade { save() }
     }
 
@@ -314,36 +342,170 @@ final class RemoteModel {
     var devicesForSelectedModel: [DeviceID] {
         selectableDevices.filter { catalog.model(for: $0)?.id == remoteDefinition.id }
     }
-    private var defaultProfile: AgentProfile { defaultProfile(for: remoteDefinition.id) }
+    private var defaultProfile: AgentProfile { defaultProfile(for: remoteDefinition, target: editingApp) }
 
-    private func defaultProfile(for modelID: String) -> AgentProfile {
-        let definition = installedModels.first { $0.id == modelID } ?? .empty
+    var apps: [AppTarget] { apps(for: remoteDefinition) }
+
+    private func apps(for definition: RemoteDefinition) -> [AppTarget] {
+        let modelID = definition.id
+        let saved = config.addedAppsByModel?[modelID] ?? []
+        let legacy = config.agents.filter { $0.modelID == modelID }.compactMap(\.target)
+        var ids: Set<String> = []
+        return ([.finder, .chatGPT] + saved + [definition.manifest.target].compactMap { $0 } + legacy)
+            .filter { ids.insert($0.bundleID).inserted }
+    }
+
+    var editingApp: AppTarget {
+        apps.first { $0.bundleID == editingBundleID } ?? .finder
+    }
+
+    var unassignedProfiles: [AgentProfile] {
+        config.agents.filter { $0.modelID == remoteDefinition.id && $0.target == nil }
+    }
+
+    func selectEditingApp(_ app: AppTarget, discardingDraft: Bool = false) {
+        guard apps.contains(where: { $0.bundleID == app.bundleID }),
+              app.bundleID != editingApp.bundleID, discardingDraft || !hasConfigurationChanges else { return }
+        discardConfigurationChanges()
+        editingBundleID = app.bundleID
+    }
+
+    @discardableResult
+    func addApp(_ app: AppTarget, discardingDraft: Bool = false) -> Bool {
+        guard discardingDraft || !hasConfigurationChanges else { return false }
+        if !apps.contains(where: { $0.bundleID == app.bundleID }) {
+            var updated = config
+            var saved = updated.addedAppsByModel ?? [:]
+            saved[remoteDefinition.id, default: []].append(app)
+            updated.addedAppsByModel = saved
+            guard save(updated) else { return false }
+        }
+        selectEditingApp(app, discardingDraft: discardingDraft)
+        return true
+    }
+
+    @discardableResult
+    func assignProfile(_ id: String) -> Bool {
+        guard !hasConfigurationChanges, unassignedProfiles.contains(where: { $0.id == id }),
+              let index = config.agents.firstIndex(where: { $0.id == id }) else { return false }
+        var updated = config
+        updated.agents[index].target = editingApp
+        selectProfileID(id, in: &updated)
+        guard save(updated) else { return false }
+        cancelGestures()
+        cancelDictation()
+        return true
+    }
+
+    private func defaultProfile(for definition: RemoteDefinition, target: AppTarget) -> AgentProfile {
+        var actions = definition.manifest.defaults.filter { _, action in
+            switch action {
+            case .shortcut, .openApp: target.bundleID == definition.manifest.target?.bundleID
+            case .dictation, .chatBar, .nextAgent: false
+            default: true
+            }
+        }
+        if target.bundleID == AppTarget.finder.bundleID {
+            let navigation: [String: FinderCommand] = [
+                "up": .up, "up-double": .pageUp, "up-long": .up,
+                "down": .down, "down-double": .pageDown, "down-long": .down,
+                "left": .left, "left-double": .sidebar, "left-long": .left,
+                "right": .right, "right-double": .content, "right-long": .right,
+                "ok": .open, "ok-double": .contextMenu, "back": .escape
+            ]
+            for (slot, command) in navigation where definition.actionSlots.contains(slot) {
+                actions[slot] = .finder(command)
+            }
+        } else if target.bundleID == AppTarget.chatGPT.bundleID, definition.actionSlots.contains("voice") {
+            actions["voice"] = .chatGPTDraft
+        }
+        for slot in definition.actionSlots {
+            if let action = globalAction(slot, definition: definition) { actions[slot] = action }
+        }
         return AgentProfile(id: AgentProfile.defaults.id, name: L10n.tr("默认配置"),
-                            target: definition.manifest.target, actions: definition.manifest.defaults, modelID: modelID)
+                            target: target, actions: actions, modelID: definition.id)
     }
 
     var profile: AgentProfile? { hasRemote ? profile(for: remoteDefinition.id) : nil }
-    var profiles: [AgentProfile] { hasRemote ? profiles(for: remoteDefinition.id) : [] }
+    var profiles: [AgentProfile] { hasRemote ? profiles(for: remoteDefinition, app: editingApp) : [] }
 
     func profile(for modelID: String) -> AgentProfile {
-        let id = config.activeAgentIDsByModel?[modelID]
-        return profiles(for: modelID).first { $0.id == id } ?? defaultProfile(for: modelID)
+        let definition = installedModels.first { $0.id == modelID } ?? .empty
+        let app = apps(for: definition).first { $0.bundleID == editingBundleID } ?? .finder
+        return profile(for: definition, app: app)
     }
 
-    private func profiles(for modelID: String) -> [AgentProfile] {
-        [defaultProfile(for: modelID)] + config.agents.filter {
-            $0.modelID == modelID && $0.id != AgentProfile.defaults.id
+    private func profile(for definition: RemoteDefinition, app: AppTarget) -> AgentProfile {
+        let id = config.activeProfileID(modelID: definition.id, bundleID: app.bundleID)
+        return profiles(for: definition, app: app).first { $0.id == id } ?? defaultProfile(for: definition, target: app)
+    }
+
+    private func profiles(for definition: RemoteDefinition, app: AppTarget) -> [AgentProfile] {
+        [defaultProfile(for: definition, target: app)] + config.agents.filter {
+            $0.modelID == definition.id && $0.target?.bundleID == app.bundleID && $0.id != AgentProfile.defaults.id
         }
     }
 
-    private func selectProfileID(_ id: String, in updated: inout Configuration) {
-        var selections = updated.activeAgentIDsByModel ?? [:]
-        selections[remoteDefinition.id] = id
-        updated.activeAgentIDsByModel = selections
-        updated.activeAgentID = id // Preserve the legacy public configuration accessor.
+    private func selectProfileID(_ id: String, in updated: inout Configuration, target: AppTarget? = nil) {
+        updated.selectProfile(id, modelID: remoteDefinition.id, bundleID: (target ?? editingApp).bundleID)
+    }
+
+    func isGlobalSlot(_ slot: String) -> Bool {
+        let key: String
+        if slot.hasSuffix("-double") { key = String(slot.dropLast("-double".count)) }
+        else if slot.hasSuffix("-long") { key = String(slot.dropLast("-long".count)) }
+        else { key = slot }
+        return globalAction(key, definition: remoteDefinition) != nil
+    }
+
+    private func globalAction(_ slot: String, definition: RemoteDefinition) -> AgentAction? {
+        guard definition.actionSlots.contains(slot) else { return nil }
+        switch slot {
+        case "home": return .openFinder
+        case "menu" where definition.manifest.defaults[slot] == .appSwitcher: return .appSwitcher
+        case "tv" where definition.manifest.defaults[slot] == .mediaChooser: return .mediaChooser
+        default: return nil
+        }
+    }
+
+    var defaultVoice: AgentAction? { config.defaultVoiceByModel?[remoteDefinition.id] }
+
+    @discardableResult
+    func setDefaultVoice(_ action: AgentAction?) -> Bool {
+        if let action {
+            guard case let .voiceShortcut(.macOS, shortcut) = action, shortcut.isVoiceCombination else { return false }
+        }
+        var updated = config
+        var voices = updated.defaultVoiceByModel ?? [:]
+        voices[remoteDefinition.id] = action
+        updated.defaultVoiceByModel = voices
+        guard save(updated) else { return false }
+        cancelDictation()
+        return true
+    }
+
+    private func runtimeAction(_ slot: String, context: ForegroundContext?) -> AgentAction? {
+        if let global = globalAction(slot, definition: remoteDefinition) { return global }
+        if let app = apps.first(where: { $0.bundleID == context?.bundleID }) {
+            let configured = profile(for: remoteDefinition, app: app).actions
+            if let action = configured[slot] { return action }
+            if slot == "voice" { return defaultVoice }
+            return nil
+        }
+        if slot == "voice" { return defaultVoice }
+        switch remoteDefinition.manifest.defaults[slot] {
+        case .shortcut, .dictation, .openApp, .chatBar, .nextAgent: return nil
+        default: return remoteDefinition.manifest.defaults[slot]
+        }
     }
     var needsProfileName: Bool { profile?.id == AgentProfile.defaults.id && draftActions != nil }
-    var editableActions: [String: AgentAction] { draftActions ?? profile?.actions ?? [:] }
+    var editableActions: [String: AgentAction] {
+        var actions = draftActions ?? profile?.actions ?? [:]
+        for slot in ["home", "menu", "tv"] {
+            if let action = globalAction(slot, definition: remoteDefinition) { actions[slot] = action }
+        }
+        return actions
+    }
     var editableRemote: RemoteMap? {
         guard let saved = config.activeRemote, catalog.model(for: saved.device)?.id == remoteDefinition.id else { return nil }
         return draftRemotes[saved.device] ?? saved
@@ -379,6 +541,47 @@ final class RemoteModel {
         canPost = permissionAccess.postEvents()
         canUseAccessibility = permissionAccess.accessibility()
         if !canUseAccessibility { cancelDictation() }
+        updateCapture()
+    }
+
+    private func updateCapture() {
+        let context = foreground()
+        hid.preservesNativeF5 = context?.bundleID == AppTarget.chatGPT.bundleID
+            && remoteDefinition.manifest.behavior.nativeDictationKeys.contains { key in
+                guard config.activeRemote?.keys.contains(where: { $0.input.isKeyboardF5 && $0.slot != key }) != true
+                else { return false }
+                let action = runtimeAction(key, context: context)
+                return action == .chatGPTDraft || action == .dictation
+            }
+        hid.wantsExclusiveKeyboard = isEnabled && !isDiagnosing && canPost && canUseAccessibility
+        updateMicrophoneConnection()
+    }
+
+    var supportsRemoteMicrophone: Bool {
+        connectedDevice?.vendor == 0x2717 && connectedDevice?.product == 0x32B8
+    }
+
+    func toggleRemoteMicrophone() {
+        usesRemoteMicrophone.toggle()
+        if !usesRemoteMicrophone { microphonePress = nil }
+        updateMicrophoneConnection()
+    }
+
+    private func updateMicrophoneConnection() {
+        let enabled = usesRemoteMicrophone && supportsRemoteMicrophone && isEnabled && !isDiagnosing && canReadKeys
+        remoteMicrophone.connect(enabled ? hid.selectedBluetoothIdentifier : nil, enabled: enabled)
+    }
+
+    func foregroundChanged() {
+        contextGeneration &+= 1
+        activeBundleID = foreground()?.bundleID
+        cancelGestures()
+        cancelDictation()
+        updateCapture()
+    }
+
+    func stopResponding() {
+        isEnabled = false
     }
 
     private func updateMonitorState(_ state: InputMonitorState) {
@@ -393,6 +596,7 @@ final class RemoteModel {
             cancelGestures()
             onDismissMedia?()
         }
+        updateMicrophoneConnection()
     }
 
     private func updateDevices(_ devices: [DeviceID]) {
@@ -428,6 +632,7 @@ final class RemoteModel {
             cancelGestures()
             onDismissMedia?()
         }
+        updateMicrophoneConnection()
     }
 
     func requestListen() {
@@ -451,6 +656,10 @@ final class RemoteModel {
         if let url = URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func requestVoiceBluetooth() {
+        if !remoteMicrophone.requestBluetoothAuthorization() { openPrivacy("Privacy_Bluetooth") }
     }
 
     func selectDevice(_ id: DeviceID) {
@@ -512,11 +721,13 @@ final class RemoteModel {
     }
 
     func setAction(_ action: AgentAction?, for slot: String) {
-        guard let saved = profile?.actions, remoteDefinition.actionSlots.contains(slot) else { return }
+        guard profile != nil, !isGlobalSlot(slot), remoteDefinition.actionSlots.contains(slot) else { return }
         cancelLearning()
         var actions = editableActions
         actions[slot] = action
         guard remoteDefinition.accepts(actions: actions) else { return }
+        var saved = profile?.actions ?? [:]
+        for key in ["home", "menu", "tv"] where isGlobalSlot(key) { saved[key] = editableActions[key] }
         draftActions = actions == saved ? nil : actions
         feedback = nil
         error = nil
@@ -543,7 +754,11 @@ final class RemoteModel {
                 updated.agents.append(copy)
                 selectProfileID(copy.id, in: &updated)
             } else if let index = updated.agents.firstIndex(where: { $0.id == profile?.id }) {
-                updated.agents[index].actions = draftActions
+                var saved = draftActions
+                for slot in ["home", "menu", "tv"] where isGlobalSlot(slot) {
+                    saved[slot] = updated.agents[index].actions[slot]
+                }
+                updated.agents[index].actions = saved
             }
         }
         updated.remotes = updated.remotes.map { draftRemotes[$0.device] ?? $0 }
@@ -574,19 +789,22 @@ final class RemoteModel {
 
     @discardableResult
     func importProfile(_ archive: ProfileArchive, as name: String, discardingDraft: Bool) -> Bool {
-        guard discardingDraft || !hasConfigurationChanges, let name = availableProfileName(name) else { return false }
+        let target = importTarget(for: archive)
+        guard discardingDraft || !hasConfigurationChanges,
+              let name = availableProfileName(name, for: target) else { return false }
         guard archive.associatedModelID == remoteDefinition.id,
               remoteDefinition.accepts(actions: archive.actions) else {
             error = L10n.tr("此配置与当前遥控器型号不匹配。")
             return false
         }
-        let copy = AgentProfile(name: name, target: defaultProfile.target, actions: archive.actions,
+        let copy = AgentProfile(name: name, target: target, actions: archive.actions,
                                 modelID: remoteDefinition.id)
         var updated = config
         updated.agents.append(copy)
-        selectProfileID(copy.id, in: &updated)
+        selectProfileID(copy.id, in: &updated, target: target)
         guard save(updated) else { return false }
         discardConfigurationChanges()
+        editingBundleID = target.bundleID
         cancelGestures()
         cancelDictation()
         onDismissMedia?()
@@ -594,13 +812,17 @@ final class RemoteModel {
         return true
     }
 
-    private func availableProfileName(_ proposed: String?) -> String? {
+    func importTarget(for archive: ProfileArchive) -> AppTarget {
+        archive.target ?? remoteDefinition.manifest.target ?? editingApp
+    }
+
+    private func availableProfileName(_ proposed: String?, for target: AppTarget? = nil) -> String? {
         let name = proposed?.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping ?? ""
         guard !name.isEmpty else {
             error = L10n.tr("请输入配置名称。")
             return nil
         }
-        guard !profiles.contains(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !profiles(for: remoteDefinition, app: target ?? editingApp).contains(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
             .precomposedStringWithCanonicalMapping.lowercased() == name.lowercased() }) else {
             error = L10n.tr("此配置名称已存在。")
             return nil
@@ -628,10 +850,11 @@ final class RemoteModel {
             onDismissMedia?()
         }
         isDiagnosing = active
+        updateCapture()
     }
 
     func pressVirtualKey(_ id: String) {
-        guard !isDiagnosing, learning == nil, calibrationConflict == nil, !isRunning, !dictation.phase.active,
+        guard !isDiagnosing, learning == nil, calibrationConflict == nil, !isRunning,
               keys.contains(where: { $0.id == id }) else { return }
         lastKeyRelease = RemoteKeyRelease(key: id)
         feedback = nil
@@ -644,15 +867,17 @@ final class RemoteModel {
             feedback = L10n.tr("遥控触发已暂停")
             return
         }
-        if onMediaKey?(id, false) == true { return }
-        guard let action = profile?.actions[id] else {
+        let context = foreground()
+        if id == "home" { onDismissMedia?() }
+        else if onMediaKey?(id, false) == true { return }
+        guard let action = runtimeAction(id, context: context) else {
             feedback = L10n.tr("此键尚未分配动作")
             return
         }
-        if action == .dictation {
+        if action.isVoiceTrigger {
             feedback = L10n.tr("请按住实体语音键开始听写。")
         } else {
-            perform(action)
+            perform(action, context: isGlobalSlot(id) ? nil : context)
         }
     }
 
@@ -702,10 +927,15 @@ final class RemoteModel {
     private func releaseInput(_ input: InputCode, origin: RemoteInputOrigin?) {
         finishHardwarePress(input, origin: origin)
         finishGesture(input, origin: origin)
+        if let press = microphonePress, press.input == input, press.origin == origin {
+            microphonePress = nil
+            remoteMicrophone.voicePressDidEnd()
+        }
         if let held = dictationInput, held.code == input, held.origin == origin {
             dictation.release()
             if !dictation.phase.active { dictationInput = nil }
         }
+        if let held = heldVoice, held.input == input, held.origin == origin { endHeldVoice() }
     }
 
     private func interruptInput(_ matches: (InputCode, RemoteInputOrigin?) -> Bool) {
@@ -718,7 +948,9 @@ final class RemoteModel {
             pendingTaps[id] = nil
         }
         if let down = hardwareDown, matches(down.code, down.origin) { clearHardwarePress() }
+        if let press = microphonePress, matches(press.input, press.origin) { cancelMicrophonePress() }
         if let held = dictationInput, matches(held.code, held.origin) { cancelDictation() }
+        if let held = heldVoice, matches(held.input, held.origin) { endHeldVoice() }
     }
 
     private func aliasedKey(for input: InputCode) -> String? {
@@ -761,33 +993,55 @@ final class RemoteModel {
         }
         guard calibrationConflict == nil, let visibleSlot else { return }
         showHardwarePress(visibleSlot.id, code: input, origin: origin)
-        guard isEnabled, !isDiagnosing, !isRunning, !dictation.phase.active else { return }
-        if onMediaKey?(visibleSlot.id, profile?.actions[visibleSlot.id].map { action in
-            if case let .foregroundKey(shortcut) = action { return input.isNativeKeyboardShortcut(shortcut) }
-            return false
-        } ?? false) == true {
+        guard isEnabled, !isDiagnosing else { return }
+        let key = visibleSlot.id
+        let context = foreground()
+        let captured = hid.captures(input, from: origin)
+        if key == "home", isGlobalSlot(key) {
+            cancelGestures()
+            cancelDictation()
+            onDismissMedia?()
+            perform(.openFinder, context: nil)
+            return
+        }
+        let action = runtimeAction(key, context: context)
+        let nativePanelKey: Bool
+        if case let .foregroundKey(shortcut) = AgentProfile.defaults.actions[key] {
+            nativePanelKey = !captured && input.isNativeKeyboardShortcut(shortcut)
+        } else { nativePanelKey = false }
+        if onMediaKey?(key, nativePanelKey) == true {
             cancelGestures()
             return
         }
-        let action = profile?.actions[visibleSlot.id]
-        if action != .dictation && (remoteDefinition.manifest.behavior.deferredKeys.contains(visibleSlot.id)
-            || gestureAction(visibleSlot.holdSlot, for: visibleSlot) != nil
-            || gestureAction(visibleSlot.doubleSlot, for: visibleSlot) != nil) {
-            startGesture(visibleSlot, input: input, origin: origin)
+        if isGlobalSlot(key), let action {
+            cancelDictation()
+            perform(action, context: nil)
             return
         }
-        guard let action else { return }
-        if action == .dictation {
-            feedback = nil
-            error = nil
-            // Packages can declare native keyboard dictation pass-through.
-            // Preserve both native edges instead of dispatching a duplicate action.
-            if remoteDefinition.manifest.behavior.nativeDictationKeys.contains(visibleSlot.id) && input.isKeyboardF5 { return }
-            guard canUseAccessibility else { requestedPermission = .accessibility; return }
-            dictationInput = (input, origin)
-            dictation.press()
-        } else {
-            dispatch(action, input: input, nativeSingle: true)
+        guard !isRunning, !dictation.phase.active, heldVoice == nil else { return }
+        if let action, action.isVoiceTrigger {
+            startVoice(action, key: key, input: input, origin: origin, context: context)
+            return
+        }
+        let hold = gestureAction(visibleSlot.holdSlot, for: visibleSlot, context: context)
+        let double = gestureAction(visibleSlot.doubleSlot, for: visibleSlot, context: context)
+        let baseline = remoteDefinition.manifest.defaults
+        if !captured, input.hasNativeKeyboardEvent,
+           remoteDefinition.slot(for: input) != key || action != baseline[key]
+            || hold != baseline[visibleSlot.holdSlot] || double != baseline[visibleSlot.doubleSlot] {
+            feedback = L10n.tr("当前设备无法可靠改绑，已保留原生按键。")
+            return
+        }
+        if case let .finder(command) = action, command != .escape, let context, !finderSupportsNavigation(context) {
+            if let native = command.nativeKey, captured {
+                perform(.foregroundKey(native), context: context)
+            }
+            return
+        }
+        if remoteDefinition.manifest.behavior.deferredKeys.contains(key) || hold != nil || double != nil {
+            startGesture(visibleSlot, input: input, origin: origin, context: context)
+        } else if let action {
+            dispatch(action, input: input, native: !captured, context: isGlobalSlot(key) ? nil : context)
         }
     }
 
@@ -803,8 +1057,75 @@ final class RemoteModel {
     }
 
     private func cancelDictation() {
+        cancelMicrophonePress()
+        endHeldVoice()
         dictationInput = nil
         dictation.cancel(L10n.tr("听写已取消，未发送。"))
+    }
+
+    private func cancelMicrophonePress() {
+        microphonePress = nil
+        remoteMicrophone.cancelRecording()
+    }
+
+    private func armMicrophone(input: InputCode, origin: RemoteInputOrigin?, context: ForegroundContext) {
+        // An alternate key can trigger dictation, but it cannot authorize the physical microphone button.
+        guard usesRemoteMicrophone, microphonePress == nil, remoteDefinition.slot(for: input) == "voice" else { return }
+        microphonePress = (input, origin, context)
+        remoteMicrophone.voicePressDidBegin()
+    }
+
+    private func startVoice(_ action: AgentAction, key: String, input: InputCode, origin: RemoteInputOrigin?,
+                            context: ForegroundContext?) {
+        guard let context, context.matches(foreground()) else { return }
+        let nativeF5 = remoteDefinition.manifest.behavior.nativeDictationKeys.contains(key) && input.isKeyboardF5
+        let captured = hid.captures(input, from: origin)
+        if action == .dictation || action == .chatGPTDraft {
+            guard context.bundleID == AppTarget.chatGPT.bundleID else { return }
+            if nativeF5 && !captured {
+                armMicrophone(input: input, origin: origin, context: context)
+                feedback = L10n.tr("已保留原生 F5，请在 ChatGPT 确认听写。")
+                return
+            }
+            if action == .dictation && !nativeF5 {
+                guard canUseAccessibility else { requestedPermission = .accessibility; return }
+                dictationInput = (input, origin)
+                dictation.press()
+                armMicrophone(input: input, origin: origin, context: context)
+                return
+            }
+        }
+        if input.hasNativeKeyboardEvent && !captured {
+            feedback = L10n.tr("当前设备无法可靠改绑，已保留原生按键。")
+            return
+        }
+        guard canPost else { requestedPermission = .accessibility; return }
+        let shortcut: KeyboardShortcut
+        let hold: Bool
+        if case let .voiceShortcut(.macOS, keys) = action {
+            shortcut = keys
+            hold = false
+        } else {
+            shortcut = .init(keyCode: 96, modifiers: [], keyName: "F5")
+            hold = true
+        }
+        do {
+            // Dictation listeners can watch the session event stream. Posting
+            // directly to the destination PID bypasses those listeners.
+            try postVoice(shortcut, true)
+            if hold { heldVoice = (input, origin, shortcut) }
+            else { try postVoice(shortcut, false) }
+            armMicrophone(input: input, origin: origin, context: context)
+            error = nil
+            feedback = L10n.tr("已触发语音快捷键，请确认识别结果。")
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func endHeldVoice() {
+        guard let held = heldVoice else { return }
+        heldVoice = nil
+        do { try postVoice(held.shortcut, false) }
+        catch { self.error = error.localizedDescription }
     }
 
     func resolveCalibrationConflict(transfer: Bool) {
@@ -822,25 +1143,41 @@ final class RemoteModel {
         feedback = L10n.format("已收到「%@」的按键信号，保存后生效。", String(describing: name))
     }
 
-    private func gestureAction(_ slot: String, for key: RemoteKey) -> AgentAction? {
-        guard key.actionSlots.contains(slot), let action = profile?.actions[slot], action != .dictation else { return nil }
+    private func gestureAction(_ slot: String, for key: RemoteKey, context: ForegroundContext?) -> AgentAction? {
+        guard key.actionSlots.contains(slot), let action = runtimeAction(slot, context: context),
+              !action.isVoiceTrigger else { return nil }
         return action
     }
 
-    private func startGesture(_ key: RemoteKey, input: InputCode, origin: RemoteInputOrigin?) {
+    private func sameFocus(_ context: ForegroundContext?) -> Bool {
+        let current = foreground()
+        return context.map { $0.matches(current) } ?? (current == nil)
+    }
+
+    private func startGesture(_ key: RemoteKey, input: InputCode, origin: RemoteInputOrigin?, context: ForegroundContext?) {
         guard gestures[key.id] == nil else { return }
         let now = ContinuousClock.now
         let pending = pendingTaps.removeValue(forKey: key.id)
         pending?.task.cancel()
-        let secondTap = pending.map { now < $0.deadline } ?? false
-        if let pending, !secondTap { runGesture(key.id, for: key, input: pending.input) }
+        let secondTap = pending.map { now < $0.deadline && sameFocus($0.context) } ?? false
+        if let pending, !secondTap {
+            runGesture(key.id, for: key, input: pending.input, origin: pending.origin, context: pending.context)
+        }
 
-        var press = GesturePress(input: input, origin: origin, started: now, secondTap: secondTap)
-        if gestureAction(key.holdSlot, for: key) != nil {
+        var press = GesturePress(input: input, origin: origin, started: now, secondTap: secondTap, context: context)
+        if let action = gestureAction(key.holdSlot, for: key, context: context) {
             press.holdTask = Task { [weak self, powerHoldDelay] in
                 do { try await Task.sleep(until: now.advanced(by: powerHoldDelay), clock: .continuous) }
                 catch { return }
                 self?.fireHold(key)
+                if case let .finder(command) = action, command.repeatsWhileHeld {
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .milliseconds(130)) }
+                        catch { return }
+                        guard let self, self.gestures[key.id]?.firedHold == true, self.sameFocus(context) else { return }
+                        self.runGesture(key.holdSlot, for: key, input: input, origin: origin, context: context)
+                    }
+                }
             }
         }
         gestures[key.id] = press
@@ -850,47 +1187,53 @@ final class RemoteModel {
         guard var press = gestures[key.id], !press.firedHold else { return }
         press.firedHold = true
         gestures[key.id] = press
-        runGesture(key.holdSlot, for: key, input: press.input)
+        runGesture(key.holdSlot, for: key, input: press.input, origin: press.origin, context: press.context)
     }
 
     private func finishGesture(_ input: InputCode, origin: RemoteInputOrigin?) {
         guard let id = gestures.first(where: { $0.value.input == input && $0.value.origin == origin })?.key,
               let press = gestures.removeValue(forKey: id), let key = keys.first(where: { $0.id == id }) else { return }
         press.holdTask?.cancel()
-        guard !press.firedHold else { return }
+        guard !press.firedHold, sameFocus(press.context) else { return }
         let now = ContinuousClock.now
-        let recognizesHold = gestureAction(key.holdSlot, for: key) != nil || gestureAction(key.doubleSlot, for: key) != nil
+        let double = gestureAction(key.doubleSlot, for: key, context: press.context)
+        let recognizesHold = gestureAction(key.holdSlot, for: key, context: press.context) != nil || double != nil
         if recognizesHold && press.started.duration(to: now) >= powerHoldDelay {
-            runGesture(key.holdSlot, for: key, input: input)
+            runGesture(key.holdSlot, for: key, input: input, origin: origin, context: press.context)
         } else if press.secondTap {
             if hardwareDown == nil, hardwarePress?.key == key.id {
                 hardwareTask?.cancel()
                 hardwarePress = HardwarePress(key: key.id, phase: .doublePress)
                 scheduleHardwareClear()
             }
-            runGesture(key.doubleSlot, for: key, input: input)
-        } else if gestureAction(key.doubleSlot, for: key) != nil {
+            runGesture(key.doubleSlot, for: key, input: input, origin: origin, context: press.context)
+        } else if double != nil {
             let deadline = now.advanced(by: doubleClickDelay)
             let task = Task { [weak self] in
                 do { try await Task.sleep(until: deadline, clock: .continuous) }
                 catch { return }
                 guard let self, self.pendingTaps.removeValue(forKey: key.id) != nil else { return }
-                self.runGesture(key.id, for: key, input: input)
+                self.runGesture(key.id, for: key, input: input, origin: origin, context: press.context)
             }
-            pendingTaps[key.id] = PendingTap(input: input, origin: origin, deadline: deadline, task: task)
+            pendingTaps[key.id] = PendingTap(input: input, origin: origin, deadline: deadline, context: press.context, task: task)
         } else {
-            runGesture(key.id, for: key, input: input)
+            runGesture(key.id, for: key, input: input, origin: origin, context: press.context)
         }
     }
 
-    private func runGesture(_ slot: String, for key: RemoteKey, input: InputCode) {
+    private func runGesture(_ slot: String, for key: RemoteKey, input: InputCode, origin: RemoteInputOrigin?,
+                            context: ForegroundContext?) {
         guard isEnabled, canReadKeys, !isDiagnosing, learning == nil, calibrationConflict == nil,
-              !dictation.phase.active, let action = gestureAction(slot, for: key) else { return }
-        dispatch(action, input: input, nativeSingle: slot == key.id)
+              !dictation.phase.active, sameFocus(context),
+              let action = gestureAction(slot, for: key, context: context) else { return }
+        let captured = hid.captures(input, from: origin)
+        if !captured, input.hasNativeKeyboardEvent,
+           remoteDefinition.slot(for: input) != key.id || action != remoteDefinition.manifest.defaults[slot] { return }
+        dispatch(action, input: input, native: slot == key.id && !captured, context: context)
     }
 
-    private func dispatch(_ action: AgentAction, input: InputCode, nativeSingle: Bool) {
-        if nativeSingle {
+    private func dispatch(_ action: AgentAction, input: InputCode, native: Bool, context: ForegroundContext?) {
+        if native {
             switch action {
             case let .foregroundKey(shortcut) where input.isNativeKeyboardShortcut(shortcut): return
             case .volumeUp where input.isNativeVolume(up: true): return
@@ -898,7 +1241,7 @@ final class RemoteModel {
             default: break
             }
         }
-        perform(action)
+        perform(action, context: context)
     }
 
     func cancelGestures() {
@@ -961,12 +1304,12 @@ final class RemoteModel {
         hardwarePress = nil
     }
 
-    private func perform(_ action: AgentAction) {
+    private func perform(_ action: AgentAction, context: ForegroundContext?) {
         guard !isRunning else { return }
         switch action {
         case .shortcut, .foregroundKey, .systemShortcut:
             guard canPost else { requestedPermission = .accessibility; return }
-        case .appleMenu, .dictation:
+        case .appleMenu, .dictation, .finder:
             guard canUseAccessibility else { requestedPermission = .accessibility; return }
         default: break
         }
@@ -979,9 +1322,13 @@ final class RemoteModel {
         }
         isRunning = true
         feedback = nil
-        let target = profile?.target
+        let target = context.map { current in
+            apps.first { $0.bundleID == current.bundleID } ?? AppTarget(bundleID: current.bundleID)
+        }
+        let generation = contextGeneration
         Task {
             defer { isRunning = false }
+            if let context, generation != contextGeneration || !context.matches(foreground()) { return }
             do {
                 try await runAction(action, target)
                 feedback = L10n.format("已执行：%@", String(describing: action.title))
@@ -1000,6 +1347,7 @@ final class RemoteModel {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(updated ?? config).write(to: storeURL, options: .atomic)
             if let updated { config = updated }
+            updateCapture()
             storageError = nil
             return true
         } catch {
@@ -1010,7 +1358,7 @@ final class RemoteModel {
 }
 
 extension InputCode {
-    private var keyboardUsage: Int? {
+    var keyboardUsage: Int? {
         guard collectionPage == 1, collectionUsage == 6, page == 7, value != 0 else { return nil }
         return usage == Int(UInt32.max) ? value : usage
     }
@@ -1021,6 +1369,10 @@ extension InputCode {
 
     var isKeyboardF5: Bool {
         isKeyboardUsage(0x3E)
+    }
+
+    var hasNativeKeyboardEvent: Bool {
+        keyboardUsage.map { (4...0xE7).contains($0) } ?? false
     }
 
     func isNativeKeyboardShortcut(_ shortcut: KeyboardShortcut) -> Bool {
@@ -1041,15 +1393,19 @@ extension InputCode {
 extension AgentAction {
     var title: String {
         switch self {
-        case .openApp: L10n.tr("打开 ChatGPT")
+        case .openApp: L10n.tr("打开应用")
+        case .openFinder: L10n.tr("打开访达")
         case .openLink: L10n.tr("打开网页")
         case .shortcut(AgentProfile.newChat): L10n.tr("新建对话")
         case .shortcut(AgentProfile.sendDraft): L10n.tr("发送当前草稿")
         case .shortcut(AgentProfile.stop): L10n.tr("停止生成")
-        case .shortcut: L10n.tr("ChatGPT 快捷键")
+        case .shortcut: L10n.tr("应用快捷键")
         case .chatBar: L10n.tr("打开 ChatGPT Chat Bar")
         case .nextAgent: L10n.tr("切换到下一个 Agent")
-        case .dictation: L10n.tr("Codex 听写")
+        case .dictation: L10n.tr("旧版 ChatGPT 听写（可自动发送）")
+        case .chatGPTDraft: L10n.tr("ChatGPT 听写草稿")
+        case let .voiceShortcut(provider, _): provider.title
+        case let .finder(command): command.title
         case .displaySleep: L10n.tr("显示器休眠")
         case .toggleDisplays: L10n.tr("关闭或恢复显示器")
         case .appleMenu: L10n.tr("打开苹果菜单")
@@ -1068,11 +1424,41 @@ extension AgentAction {
         switch self {
         case let .openLink(url): url
         case let .shortcut(keys): keys.label
+        case let .voiceShortcut(_, keys): keys.label
         case .chatBar: "⌥Space"
         case let .systemShortcut(keys): keys.label
         case .toggleDisplays: L10n.tr("短按关闭支持的外接屏并调低内置屏亮度，再按恢复")
         case .displaySleep: L10n.tr("唤醒时是否需要密码取决于 macOS 的「锁定屏幕」设置")
         default: nil
+        }
+    }
+}
+
+extension VoiceProvider {
+    var title: String {
+        switch self {
+        case .macOS: L10n.tr("macOS 听写")
+        case .weType: L10n.tr("无操作")
+        }
+    }
+}
+
+extension FinderCommand {
+    var title: String {
+        switch self {
+        case .up: L10n.tr("向上选择")
+        case .down: L10n.tr("向下选择")
+        case .left: L10n.tr("向左选择")
+        case .right: L10n.tr("向右选择")
+        case .pageUp: L10n.tr("上一页")
+        case .pageDown: L10n.tr("下一页")
+        case .sidebar: L10n.tr("聚焦边栏")
+        case .content: L10n.tr("聚焦内容")
+        case .open: L10n.tr("打开所选项目")
+        case .contextMenu: L10n.tr("所选项目的右键菜单")
+        case .escape: "Esc"
+        case .parent: L10n.tr("上一级文件夹")
+        case .historyBack: L10n.tr("历史后退")
         }
     }
 }
