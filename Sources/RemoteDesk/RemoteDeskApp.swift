@@ -1,9 +1,36 @@
 import AppKit
 import Carbon
+#if DEBUG
+import Darwin
+#endif
 import Observation
 import SwiftUI
 
 @main
+enum RemoteDeskMain {
+    @MainActor
+    static func main() {
+        #if DEBUG
+        let lockPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("infinite-remote-debug.lock").path
+        let lock = open(lockPath, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard lock >= 0 else {
+            FileHandle.standardError.write(Data("Cannot open the Infinite Remote Debug lock.\n".utf8))
+            return
+        }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else {
+            let message = errno == EWOULDBLOCK
+                ? "Infinite Remote Debug is already running."
+                : "Cannot acquire the Infinite Remote Debug lock."
+            FileHandle.standardError.write(Data((message + "\n").utf8))
+            return
+        }
+        #endif
+        RemoteDeskApp.main()
+    }
+}
+
 struct RemoteDeskApp: App {
     @NSApplicationDelegateAdaptor(RemoteWindows.self) private var windows
 
