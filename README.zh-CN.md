@@ -1,6 +1,6 @@
 # 无限遥控器 · Infinite Remote
 
-[English version](README.md)
+[官网](https://szhjia.github.io/infinite-remote-website/zh/) · [English version](README.md)
 
 通过独立安装的遥控器型号包操作 macOS 和所选应用。首个适配型号是小米蓝牙遥控器 2 Pro（`2717:32B8`）。支持 macOS 14 起，macOS 26 及以上使用系统的 Liquid Glass 工具栏控件。
 

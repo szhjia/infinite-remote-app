@@ -1,6 +1,6 @@
 # Infinite Remote App
 
-[中文版本](README.zh-CN.md)
+[Official website](https://szhjia.github.io/infinite-remote-website/en/) · [中文版本](README.zh-CN.md)
 
 Control macOS and your selected applications with independently installed remote model packages. Xiaomi Bluetooth Remote 2 Pro (`2717:32B8`) is the first supported model. Infinite Remote supports macOS 14 and later, and uses the system's Liquid Glass toolbar controls on macOS 26 and later.
 
