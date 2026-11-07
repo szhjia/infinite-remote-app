@@ -355,12 +355,12 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 brand.leadingAnchor.constraint(equalTo: lastWindowButton.trailingAnchor, constant: 12),
                 brand.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
             ])
-            let remoteButton = NSHostingView(rootView: RemoteModelButton(windows: self).fixedSize())
-            remoteButton.translatesAutoresizingMaskIntoConstraints = false
-            titlebar.addSubview(remoteButton)
+            let remoteControls = NSHostingView(rootView: WorkspaceRemoteControls(windows: self))
+            remoteControls.translatesAutoresizingMaskIntoConstraints = false
+            titlebar.addSubview(remoteControls)
             NSLayoutConstraint.activate([
-                remoteButton.trailingAnchor.constraint(equalTo: titlebar.trailingAnchor, constant: -15),
-                remoteButton.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
+                remoteControls.trailingAnchor.constraint(equalTo: titlebar.trailingAnchor, constant: -15),
+                remoteControls.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
             ])
             let pageTitle = NSHostingView(rootView: WorkspaceTitle(windows: self))
             pageTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -565,6 +565,23 @@ private final class BorderlessRemoteWindow: NSWindow {
 }
 
 private extension RemoteWindows {
+    struct WorkspaceRemoteControls: View {
+        unowned let windows: RemoteWindows
+
+        var body: some View {
+            HStack(spacing: 8) {
+                if windows.workspacePage == .remote && windows.model.hasRemote {
+                    Label(windows.model.connectionStatus,
+                          systemImage: windows.model.canReadKeys ? "waveform" : "exclamationmark.circle")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                RemoteModelButton(windows: windows)
+            }
+            .fixedSize()
+        }
+    }
+
     struct WorkspaceTitle: View {
         unowned let windows: RemoteWindows
 

@@ -268,23 +268,15 @@ struct Workspace: View {
 
     private var deviceWorkspace: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(model.remoteDefinition.manifest.name).font(.title2.bold())
-                    .accessibilityAddTraits(.isHeader)
-                    .fixedSize(horizontal: false, vertical: true)
-                if model.readiness != .needsInputMonitoring {
-                    HStack(spacing: 10) {
-                        Label(model.connectionStatus, systemImage: model.canReadKeys ? "waveform" : "exclamationmark.circle")
-                            .font(.callout.weight(.medium))
-                        readinessAction
-                        Spacer()
-                    }
+            if model.readiness != .needsInputMonitoring {
+                HStack(spacing: 10) {
+                    readinessAction
+                    Spacer()
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                Divider()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            Divider()
             GeometryReader { geometry in
                 let configWidth = Self.appRailWidth + Self.mappingWidth + 1
                 if geometry.size.width >= configWidth + 320 {
