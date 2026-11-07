@@ -466,7 +466,7 @@
 "打开常用媒体" = "Open your favorite media";
 "用遥控器选择音乐和视频应用。" = "Choose music and video apps with the remote.";
 "按键开始听写" = "Start dictation with a button";
-"配置 ChatGPT 听写快捷键后，用遥控器开始听写。" = "Set up the ChatGPT dictation shortcut to start dictation with the remote.";
+"用遥控器触发 macOS 听写。" = "Trigger macOS Dictation with your remote.";
 /* Foreground app profiles */
 "请先选择一个访达项目。" = "Select a Finder item first.";
 "当前访达窗口没有显示边栏。" = "This Finder window has no visible sidebar.";
@@ -506,8 +506,8 @@
 "通用 · %@" = "Default · %@";
 "清除通用语音入口" = "Clear Default Voice Provider";
 "将旧配置分配给此应用" = "Assign Legacy Profile to This App";
-"将 ChatGPT 的按住听写快捷键设为 F5。已配置，需在草稿中确认识别结果。" = "Set the ChatGPT hold-to-dictate shortcut to F5. Check the transcription in a draft.";
-"%@ · %@ · 已配置，转写待验证" = "%@ · %@ · Configured, transcription unverified";
+"将 ChatGPT 的按住听写快捷键设为 F5，然后在草稿中确认转写。" = "Set the ChatGPT hold-to-dictate shortcut to F5, then check the transcription in a draft.";
+"%@ · %@ · 转写待验证" = "%@ · %@ · Transcription unverified";
 "访达导航适用于列表和图标视图。" = "Finder navigation supports list and icon views.";
 "录入应用快捷键" = "Record App Shortcut";
 "在系统键盘设置中开启听写并设定组合键，再录入相同的组合键。请在文本编辑中确认转写。" = "Enable Dictation in Keyboard settings, then record the shortcut you set there. Check transcription in TextEdit.";
@@ -549,3 +549,6 @@
 "尚未检测到 BlackHole 2ch" = "BlackHole 2ch not detected";
 "语音蓝牙已授权" = "Bluetooth access granted for voice";
 "机身麦克风需要蓝牙权限" = "Bluetooth access is required for the remote microphone";
+"设置 macOS 听写" = "Set Up macOS Dictation";
+"设置 macOS 听写后，可以用遥控器的语音键开始听写。" = "Set up macOS Dictation to start dictation with the voice button on your remote.";
+"快捷键已保存 · 转写待验证。请在文本编辑器里按遥控器的语音键试一次。" = "Shortcut saved · Transcription unverified. In a text editor, press the voice button on your remote to try it.";

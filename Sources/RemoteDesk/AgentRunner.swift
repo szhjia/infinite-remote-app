@@ -7,6 +7,7 @@ import RemoteCore
 @MainActor
 enum AgentRunner {
     static let finder = FinderNavigation()
+    static let isChatGPTEnabled = Bundle.main.object(forInfoDictionaryKey: "InfiniteRemoteChatGPTEnabled") as? Bool ?? true
     private static let remoteEventTag: Int64 = 0x52444B4559
 
     enum Failure: LocalizedError {
@@ -24,6 +25,7 @@ enum AgentRunner {
 
     static func appURL(_ target: AppTarget?) -> URL? {
         guard let target else { return nil }
+        guard isChatGPTEnabled || target.bundleID != AppTarget.chatGPT.bundleID else { return nil }
         if let path = target.path {
             let url = URL(fileURLWithPath: path)
             if Bundle(url: url)?.bundleIdentifier == target.bundleID { return url }

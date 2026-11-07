@@ -347,14 +347,6 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titleVisibility = .hidden
         if let lastWindowButton = window.standardWindowButton(.zoomButton) ?? window.standardWindowButton(.miniaturizeButton),
            let titlebar = lastWindowButton.superview {
-            let brand = NSHostingView(rootView: WorkspaceBrand())
-            brand.translatesAutoresizingMaskIntoConstraints = false
-            titlebar.addSubview(brand)
-            // Follow the native controls rather than assuming a title-bar height.
-            NSLayoutConstraint.activate([
-                brand.leadingAnchor.constraint(equalTo: lastWindowButton.trailingAnchor, constant: 12),
-                brand.centerYAnchor.constraint(equalTo: lastWindowButton.centerYAnchor)
-            ])
             let remoteControls = NSHostingView(rootView: WorkspaceRemoteControls(windows: self))
             remoteControls.translatesAutoresizingMaskIntoConstraints = false
             titlebar.addSubview(remoteControls)

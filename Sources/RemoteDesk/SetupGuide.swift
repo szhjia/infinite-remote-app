@@ -13,6 +13,7 @@ struct SetupGuide: View {
     @State private var stage: SetupStage
     @State private var waitsForRemoteOnResume: Bool
     @State private var voiceDriverReady = false
+    @State private var showsMacDictationSetup = false
     @AccessibilityFocusState private var headingFocused: Bool
 
     init(model: RemoteModel, library: ResourceLibrary, stage: SetupStage,
@@ -67,6 +68,9 @@ struct SetupGuide: View {
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         .background(Color(nsColor: .windowBackgroundColor))
         .focusEffectDisabled(!showsKeyboardFocus())
+        .sheet(isPresented: $showsMacDictationSetup) {
+            MacDictationSetup(model: model) { showsMacDictationSetup = false }
+        }
         .onChange(of: readiness.canFinish, initial: true) { _, canFinish in
             if waitsForRemoteOnResume && stage == .permissions && canFinish {
                 stage = .ready
@@ -95,10 +99,17 @@ struct SetupGuide: View {
             if let previous = stage.adjacent(-1) {
                 Button(L10n.tr("上一步")) { stage = previous }
             }
-            Button(primaryTitle, action: advance)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canAdvance)
+            if stage == .ready && canAdvance && model.hasVoiceKey && model.defaultVoice == nil {
+                Button(L10n.tr("稍后设置"), action: advance)
+                Button(L10n.tr("设置 macOS 听写")) { showsMacDictationSetup = true }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            } else {
+                Button(primaryTitle, action: advance)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canAdvance)
+            }
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 16)
@@ -228,12 +239,17 @@ struct SetupGuide: View {
                 .accessibilityHidden(true)
             Text(L10n.tr(readiness.canFinish ? "遥控器已就绪" : "遥控器暂未就绪"))
                 .font(.largeTitle.bold())
-            Text(L10n.tr(readiness.canFinish
-                ? "为第一个按键选一个动作，就可以试用遥控器。"
-                : "请返回上一步检查连接和权限。"))
+            Text(L10n.tr(readyDetail))
                 .foregroundStyle(.secondary)
         }
         .multilineTextAlignment(.center)
+    }
+
+    private var readyDetail: String {
+        guard readiness.canFinish else { return "请返回上一步检查连接和权限。" }
+        guard model.hasVoiceKey else { return "为第一个按键选一个动作，就可以试用遥控器。" }
+        if model.defaultVoice != nil { return MacDictationSetup.verificationPrompt }
+        return "设置 macOS 听写后，可以用遥控器的语音键开始听写。"
     }
 }
 

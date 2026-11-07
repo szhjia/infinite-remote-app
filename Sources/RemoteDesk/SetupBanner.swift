@@ -17,7 +17,7 @@ struct SetupBanner: View {
               symbol: "macwindow.on.rectangle", tint: .purple),
         .init(title: "打开常用媒体", detail: "用遥控器选择音乐和视频应用。",
               symbol: "play.rectangle", tint: .teal),
-        .init(title: "按键开始听写", detail: "配置 ChatGPT 听写快捷键后，用遥控器开始听写。",
+        .init(title: "按键开始听写", detail: "用遥控器触发 macOS 听写。",
               symbol: "waveform", tint: .blue)
     ]
 

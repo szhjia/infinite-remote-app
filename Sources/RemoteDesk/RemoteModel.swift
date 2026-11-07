@@ -133,6 +133,7 @@ final class RemoteModel {
     var onModelChanged: (() -> Void)?
     private let runAction: @MainActor (AgentAction, AppTarget?) async throws -> Void
     private let foreground: @MainActor () -> ForegroundContext?
+    private let isChatGPTEnabled: Bool
     private let finderSupportsNavigation: @MainActor (ForegroundContext) -> Bool
     private let postVoice: @MainActor (KeyboardShortcut, Bool) throws -> Void
     private var heldVoice: (input: InputCode, origin: RemoteInputOrigin?, shortcut: KeyboardShortcut)?
@@ -175,6 +176,7 @@ final class RemoteModel {
          powerHoldDelay: Duration = .milliseconds(600),
          doubleClickDelay: Duration = .milliseconds(300),
          foreground: @escaping @MainActor () -> ForegroundContext? = ForegroundContext.current,
+         isChatGPTEnabled: Bool = AgentRunner.isChatGPTEnabled,
          finderSupportsNavigation: @escaping @MainActor (ForegroundContext) -> Bool = { _ in true },
          postVoice: @escaping @MainActor (KeyboardShortcut, Bool) throws -> Void = AgentRunner.postVoiceEdge,
          runAction: @escaping @MainActor (AgentAction, AppTarget?) async throws -> Void) {
@@ -189,6 +191,7 @@ final class RemoteModel {
             .appending(path: "RemoteModels", directoryHint: .isDirectory))
         self.runAction = runAction
         self.foreground = foreground
+        self.isChatGPTEnabled = isChatGPTEnabled
         self.finderSupportsNavigation = finderSupportsNavigation
         self.postVoice = postVoice
         self.activeBundleID = foreground()?.bundleID
@@ -263,6 +266,7 @@ final class RemoteModel {
         return config.selectedDevice.flatMap(catalog.model(for:)) ?? installedModels.first ?? .empty
     }
     var keys: [RemoteKey] { remoteDefinition.layout.keys }
+    var hasVoiceKey: Bool { remoteDefinition.actionSlots.contains("voice") }
     var consumesContextMenu: Bool { remoteDefinition.manifest.behavior.consumesContextMenu }
     func installedOwner(of id: String) -> String? { catalog.owner(of: id) }
 
@@ -416,7 +420,8 @@ final class RemoteModel {
             for (slot, command) in navigation where definition.actionSlots.contains(slot) {
                 actions[slot] = .finder(command)
             }
-        } else if target.bundleID == AppTarget.chatGPT.bundleID, definition.actionSlots.contains("voice") {
+        } else if target.bundleID == AppTarget.chatGPT.bundleID, definition.actionSlots.contains("voice"),
+                  config.defaultVoiceByModel?[definition.id] == nil {
             actions["voice"] = .chatGPTDraft
         }
         for slot in definition.actionSlots {
@@ -486,7 +491,8 @@ final class RemoteModel {
 
     private func runtimeAction(_ slot: String, context: ForegroundContext?) -> AgentAction? {
         if let global = globalAction(slot, definition: remoteDefinition) { return global }
-        if let app = apps.first(where: { $0.bundleID == context?.bundleID }) {
+        if let app = apps.first(where: { $0.bundleID == context?.bundleID }),
+           isChatGPTEnabled || app.bundleID != AppTarget.chatGPT.bundleID {
             let configured = profile(for: remoteDefinition, app: app).actions
             if let action = configured[slot] { return action }
             if slot == "voice" { return defaultVoice }

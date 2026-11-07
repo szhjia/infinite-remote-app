@@ -91,6 +91,30 @@ struct ShortcutSetup: View {
 }
 
 @MainActor
+struct MacDictationSetup: View {
+    static let instructions = "在系统键盘设置中开启听写并设定组合键，再录入相同的组合键。请在文本编辑中确认转写。"
+    static let verificationPrompt = "快捷键已保存 · 转写待验证。请在文本编辑器里按遥控器的语音键试一次。"
+
+    let model: RemoteModel
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ShortcutSetup(title: VoiceProvider.macOS.title, instructions: L10n.tr(Self.instructions),
+                          needsCombination: true, cancel: dismiss) { shortcut in
+                if model.setDefaultVoice(.voiceShortcut(.macOS, shortcut)) { dismiss() }
+            }
+            if let error = model.storageError {
+                Text(error).font(.callout).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding([.horizontal, .bottom], 18)
+                    .frame(width: 410, alignment: .leading)
+            }
+        }
+    }
+}
+
+@MainActor
 extension AppTarget {
     var displayName: String {
         if bundleID == Self.finder.bundleID { return L10n.tr("访达") }

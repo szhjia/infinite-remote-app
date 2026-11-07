@@ -37,12 +37,13 @@ private final class RoutingFixture: RemoteInputSource {
         send(usage, down: false)
     }
 
-    func model(in folder: URL, finderViewSupported: Bool = true) -> RemoteModel {
+    func model(in folder: URL, finderViewSupported: Bool = true, isChatGPTEnabled: Bool = true) -> RemoteModel {
         _ = fixtureCatalog(directory: folder.appending(path: "RemoteModels"))
         let model = RemoteModel(hid: self, storeURL: folder.appending(path: "configuration.json"),
                                 permissions: .init(postEvents: { true }, accessibility: { true }),
                                 powerHoldDelay: .milliseconds(45), doubleClickDelay: .milliseconds(60),
                                 foreground: { self.focus },
+                                isChatGPTEnabled: isChatGPTEnabled,
                                 finderSupportsNavigation: { _ in finderViewSupported },
                                 postVoice: { self.voice.append(($0, $1)) },
                                 runAction: { self.executed.append(($0, $1?.bundleID)) })
@@ -113,16 +114,39 @@ func foregroundRoutingIsIndependentFromEditingAndIgnoresUnverifiedNativeGestures
 }
 
 @Test @MainActor
-func systemVoiceTogglesAndChatGPTUsesNativeF5UnlessOverridden() throws {
+func chatGPTUsesNativeF5UntilAnAppVoiceBindingIsSaved() throws {
+    let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let fixture = RoutingFixture()
+    let model = fixture.model(in: folder)
+    let shortcut = KeyboardShortcut(keyCode: 8, modifiers: [.control, .option], keyName: "C")
+    fixture.focus = .init(bundleID: AppTarget.chatGPT.bundleID, pid: 14)
+    model.foregroundChanged()
+    #expect(fixture.preservesNativeF5)
+    fixture.tap(0x3E)
+    #expect(fixture.voice.isEmpty)
+    #expect(model.feedback == L10n.tr("已保留原生 F5，请在 ChatGPT 确认听写。"))
+
+    model.selectEditingApp(.chatGPT)
+    model.setAction(.voiceShortcut(.macOS, shortcut), for: "voice")
+    #expect(fixture.preservesNativeF5)
+    #expect(model.saveConfigurationChanges(as: "ChatGPT System Dictation"))
+    #expect(!fixture.preservesNativeF5)
+    fixture.tap(0x3E)
+    #expect(fixture.voice.map(\.1) == [true, false])
+    #expect(fixture.voice.allSatisfy { $0.0 == shortcut })
+}
+
+@Test @MainActor
+func generalVoiceWorksInChatGPTUntilAnExplicitChatGPTBindingTakesPrecedence() throws {
     let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
     let fixture = RoutingFixture()
     let model = fixture.model(in: folder)
     let shortcut = KeyboardShortcut(keyCode: 8, modifiers: [.control, .option], keyName: "C")
     #expect(!model.setDefaultVoice(.voiceShortcut(.weType, shortcut)))
-    #expect(model.setDefaultVoice(.voiceShortcut(.macOS, shortcut)))
-    fixture.send(0x3E, down: true)
-    fixture.send(0x3E, down: false)
+    try #require(model.setDefaultVoice(.voiceShortcut(.macOS, shortcut)))
+    fixture.tap(0x3E)
     #expect(fixture.voice.map(\.1) == [true, false])
     #expect(fixture.voice.allSatisfy { $0.0 == shortcut })
 
@@ -132,19 +156,24 @@ func systemVoiceTogglesAndChatGPTUsesNativeF5UnlessOverridden() throws {
     fixture.captured = true
     fixture.focus = .init(bundleID: AppTarget.chatGPT.bundleID, pid: 14)
     model.foregroundChanged()
-    #expect(fixture.preservesNativeF5)
-    fixture.tap(0x3E)
-    #expect(fixture.voice.count == 2)
-    #expect(model.feedback == L10n.tr("已保留原生 F5，请在 ChatGPT 确认听写。"))
-
-    model.selectEditingApp(.chatGPT)
-    model.setAction(.voiceShortcut(.macOS, shortcut), for: "voice")
-    #expect(fixture.preservesNativeF5)
-    #expect(model.saveConfigurationChanges(as: "ChatGPT System Dictation"))
     #expect(!fixture.preservesNativeF5)
     fixture.tap(0x3E)
     #expect(fixture.voice.map(\.1) == [true, false, true, false])
-    #expect(fixture.voice.last?.0 == shortcut)
+
+    model.selectEditingApp(.chatGPT)
+    model.setAction(.chatGPTDraft, for: "voice")
+    try #require(model.saveConfigurationChanges(as: "ChatGPT Dictation"))
+    #expect(fixture.preservesNativeF5)
+    fixture.tap(0x3E)
+    #expect(fixture.voice.count == 4)
+
+    let disabled = fixture.model(in: folder, isChatGPTEnabled: false)
+    disabled.selectEditingApp(.chatGPT)
+    #expect(disabled.editableActions["voice"] == .chatGPTDraft)
+    #expect(!fixture.preservesNativeF5)
+    fixture.tap(0x3E)
+    #expect(fixture.voice.map(\.1) == [true, false, true, false, true, false])
+    #expect(fixture.voice.allSatisfy { $0.0 == shortcut })
 }
 
 @Test @MainActor
