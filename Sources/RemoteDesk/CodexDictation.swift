@@ -167,7 +167,7 @@ final class DictationController {
 }
 
 @MainActor
-private final class CodexDictationSession: DictationSession {
+final class CodexDictationSession: DictationSession {
     private enum Control {
         static let start = ["Dictate", "听写", "聽寫"]
         static let stop = ["Stop dictation", "停止听写", "停止聽寫"]
@@ -283,7 +283,7 @@ private final class CodexDictationSession: DictationSession {
         return Self.elements(in: webArea)
     }
 
-    private static func codexRoute(_ area: AXUIElement) -> URL? {
+    static func codexRoute(_ area: AXUIElement) -> URL? {
         guard let url = Accessibility.value(area, kAXURLAttribute) as? URL else { return nil }
         // The installed desktop client uses /local/:conversationId for a Codex chat.
         // ChatGPT chats and new composers must not qualify.

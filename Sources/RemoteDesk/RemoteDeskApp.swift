@@ -450,7 +450,8 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func finishSetup() {
         guard SetupReadiness(model: model).canFinish,
-              let key = model.keys.first(where: { $0.id == model.slot }) ?? model.keys.first else { return }
+              let key = model.keys.first(where: { $0.id == "voice" })
+                ?? model.keys.first(where: { $0.id == model.slot }) ?? model.keys.first else { return }
         SetupStartup.finish(in: .standard)
         needsInitialSetup = false
         didDeferSetup = false
@@ -593,6 +594,14 @@ private extension RemoteWindows {
             let model = windows.model
             HStack(spacing: 8) {
                 if windows.workspacePage == .remote && model.hasRemote {
+                    if model.showsRemoteMicrophoneStatus {
+                        let microphone = model.remoteMicrophone
+                        Image(systemName: microphone.isConnected ? (microphone.isForwardingAudio ? "mic.fill" : "mic") : "mic.slash")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(microphone.isForwardingAudio ? Color.accentColor : Color.secondary)
+                            .help(model.remoteMicrophoneStatus)
+                            .accessibilityLabel(model.remoteMicrophoneStatus)
+                    }
                     Label(model.connected ? L10n.tr(model.canListen ? "已连接" : "已连接 · 未授权") : model.connectionStatus,
                           systemImage: model.canReadKeys ? "waveform" : "exclamationmark.circle")
                         .font(.callout.weight(.medium))

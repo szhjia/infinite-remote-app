@@ -152,6 +152,10 @@ struct RemoteDefinition {
     func accepts(actions: [String: AgentAction]) -> Bool {
         actions.keys.allSatisfy(actionSlots.contains)
             && !actions.values.contains(where: \.isRemovedVoiceBinding)
+            && !actions.values.contains(where: {
+                if case .codexConversation = $0 { return true }
+                return false
+            })
             && layout.keys.allSatisfy { key in
             let variants = [actions[key.doubleSlot], actions[key.holdSlot]].compactMap { $0 }
             guard !variants.contains(where: \.isVoiceTrigger) else { return false }

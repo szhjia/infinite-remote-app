@@ -50,12 +50,13 @@ struct DeviceStage: View {
                 VStack(spacing: 4) {
                     Toggle(L10n.tr("遥控器麦克风"), isOn: Binding(
                         get: { model.usesRemoteMicrophone },
-                        set: { if $0 != model.usesRemoteMicrophone { model.toggleRemoteMicrophone() } }
+                        set: model.setRemoteMicrophoneEnabled
                     ))
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    if let status = model.remoteMicrophone.status {
-                        Text(status).font(.caption).foregroundStyle(.secondary)
+                    Text(model.remoteMicrophoneStatus).font(.caption).foregroundStyle(.secondary)
+                    if model.needsRemoteMicrophoneBluetooth {
+                        Button(L10n.tr("授权蓝牙…"), action: model.requestVoiceBluetooth)
                     }
                     if model.usesRemoteMicrophone {
                         Text(L10n.tr("使用遥控器收音时，请按住语音键。"))

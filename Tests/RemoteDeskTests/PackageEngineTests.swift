@@ -147,6 +147,7 @@ func v2RejectsStringLocalizationUnsafeDefaultsAndExecutableTargets() throws {
         ["defaults": ["home": ["openLink": ["_0": "https://example.com/help"]]]],
         ["defaults": ["home": ["chatBar": [:]]]],
         ["defaults": ["home": ["nextAgent": [:]]]],
+        ["defaults": ["voice": ["systemDictation": [:]]]],
         ["defaults": ["power-long": ["dictation": [:]]]],
         ["defaults": ["power": ["dictation": [:]], "power-long": ["openApp": [:]]]],
         ["target": ["bundleID": "com.example.app", "path": "/tmp/executable"]],

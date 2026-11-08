@@ -59,7 +59,7 @@ struct KeyMappingEditor: View {
                     }
                 }
                 Spacer(minLength: 4)
-                Button(L10n.tr("切换配置…")) { onCommand(.showProfiles) }
+                Button(L10n.tr("配置列表")) { onCommand(.showProfiles) }
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 9)
@@ -120,7 +120,7 @@ struct KeyMappingEditor: View {
     private func row(_ key: RemoteKey) -> some View {
         let selected = model.slot == key.id
         let phase = model.hardwarePress.flatMap { $0.key == key.id ? $0.phase : nil }
-        let voiceAction = key.id == "voice" ? model.editableActions[key.id] ?? model.defaultVoice : nil
+        let voiceAction = key.id == "voice" ? model.editableActions[key.id] ?? model.editableVoiceFallback : nil
         return HStack(spacing: 8) {
             HStack(spacing: 4) {
                 Button { onLocateKey(key.id) } label: {
@@ -240,6 +240,7 @@ struct KeyMappingEditor: View {
 
     private func showsHoldToRecord(_ action: AgentAction) -> Bool {
         switch action {
+        case .systemDictation: model.supportsRemoteMicrophone && model.usesRemoteMicrophone
         case .voiceShortcut(.macOS, _): model.supportsRemoteMicrophone
         case .chatGPTDraft, .dictation: !unavailableChatGPTVoice(action)
         default: false
@@ -288,63 +289,44 @@ struct KeyMappingEditor: View {
     private func editableMappingControl(_ key: RemoteKey, slot: String, gesture: String?) -> some View {
         let action = model.editableActions[slot]
         let isVoiceSlot = slot == "voice"
-        let effectiveAction = action ?? (isVoiceSlot ? model.defaultVoice : nil)
+        let voiceFallback = isVoiceSlot ? model.editableVoiceFallback : nil
+        let effectiveAction = action ?? voiceFallback
         let missing = unavailableChatGPTVoice(effectiveAction)
         let label = missing ? L10n.tr("未安装") : effectiveAction.map(compactActionLabel) ?? L10n.tr("无操作")
         let accessibilityLabel = gesture.map { L10n.format("%@%@的功能", key.name, $0) } ?? L10n.tr("语音键功能")
         let nativeNote = slot == key.id || model.capturesKeyboard ? "" : L10n.tr("。macOS 仍可能响应实体键的原生操作。")
         Menu {
-            if isVoiceSlot, let defaultVoice = model.defaultVoice {
-                actionItem(nil, for: key, slot: slot, title: L10n.tr("使用默认语音"), symbol: defaultVoice.mappingSymbol)
+            if let voiceFallback {
+                actionItem(nil, for: key, slot: slot, title: L10n.tr("使用默认语音"), symbol: voiceFallback.mappingSymbol)
             } else {
                 actionItem(nil, for: key, slot: slot)
             }
             if isVoiceSlot {
+                let hasGestureBindings = model.editableActions[key.doubleSlot] != nil || model.editableActions[key.holdSlot] != nil
                 Section(L10n.tr("语音入口")) {
                     if model.editingApp.bundleID == AppTarget.chatGPT.bundleID && !chatGPTIsMissing {
                         actionItem(.chatGPTDraft, for: key, slot: slot)
                     }
-                    Button(VoiceProvider.macOS.title + "…") { onCommand(.recordShortcut(slot: slot, provider: .macOS)) }
+                    actionItem(.systemDictation, for: key, slot: slot).disabled(hasGestureBindings)
+                    if hasGestureBindings { Text(L10n.tr("清除语音键的双击和长按动作后可使用系统听写。")) }
                 }
                 Section(L10n.tr("默认语音")) {
-                    Button(L10n.tr("设置默认听写…")) { onCommand(.recordShortcut(slot: nil, provider: .macOS)) }
-                    Button(L10n.tr("清除默认语音")) { model.setDefaultVoice(nil) }
+                    Toggle(L10n.tr("默认使用 macOS 听写"), isOn: Binding(
+                        get: { model.defaultVoice == .systemDictation },
+                        set: { _ in model.setDefaultVoice(.systemDictation) }
+                    ))
+                    Button(L10n.tr("关闭默认语音")) { model.setDefaultVoice(nil) }
                         .disabled(model.defaultVoice == nil)
                 }
-            }
-            Section(L10n.tr("应用快捷键")) {
-                Button(L10n.tr("录入应用快捷键…")) { onCommand(.recordShortcut(slot: slot, provider: nil)) }
-                if model.editingApp.bundleID == AppTarget.chatGPT.bundleID {
-                    actionItem(.shortcut(AgentProfile.newChat), for: key, slot: slot)
-                    actionItem(.shortcut(AgentProfile.sendDraft), for: key, slot: slot)
-                    actionItem(.shortcut(AgentProfile.stop), for: key, slot: slot)
-                }
-            }
-            if model.editingApp.bundleID == AppTarget.finder.bundleID {
-                Section(L10n.tr("访达导航")) {
-                    ForEach(FinderCommand.allCases, id: \.self) { command in
-                        actionItem(.finder(command), for: key, slot: slot)
+                Menu(L10n.tr(MacDictationSetup.compatibilityTitle)) {
+                    Button(L10n.tr("此应用的听写快捷键…")) { onCommand(.recordShortcut(slot: slot, provider: .macOS)) }
+                        .disabled(hasGestureBindings)
+                    Button(L10n.tr("默认听写快捷键…")) {
+                        onCommand(.recordShortcut(slot: nil, provider: .macOS))
                     }
                 }
-            }
-            Section("macOS") {
-                ForEach([AgentAction.toggleDisplays, .displaySleep, .lockScreen, .appSwitcher, .showDesktop, .volumeUp, .volumeDown, .appleMenu, .mediaChooser],
-                        id: \.title) { option in
-                    actionItem(option, for: key, slot: slot)
-                }
-                Button {
-                    onLocateKey(key.id)
-                    refreshHotKeys(for: slot)
-                } label: {
-                    Label(L10n.tr("选择系统快捷键…"), systemImage: "command")
-                }
-            }
-            Section(L10n.tr("键盘按键")) {
-                ForEach(["up", "down", "left", "right", "ok", "back"], id: \.self) { id in
-                    if let action = AgentProfile.defaults.actions[id] {
-                        actionItem(action, for: key, slot: slot)
-                    }
-                }
+            } else {
+                standardMappingOptions(for: key, slot: slot)
             }
         } label: {
             Label {
@@ -358,12 +340,51 @@ struct KeyMappingEditor: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
+        .disabled(model.editingCodexPreset)
         .focused($mappingFocus, equals: slot)
         .menuIndicator(.visible)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(label)
         .help((missing ? label : effectiveAction?.detail ?? label) + nativeNote)
+    }
+
+    @ViewBuilder
+    private func standardMappingOptions(for key: RemoteKey, slot: String) -> some View {
+        Section(L10n.tr("应用快捷键")) {
+            Button(L10n.tr("录入应用快捷键…")) { onCommand(.recordShortcut(slot: slot, provider: nil)) }
+            if model.editingApp.bundleID == AppTarget.chatGPT.bundleID {
+                actionItem(.shortcut(AgentProfile.newChat), for: key, slot: slot)
+                actionItem(.shortcut(AgentProfile.sendDraft), for: key, slot: slot)
+                actionItem(.shortcut(AgentProfile.stop), for: key, slot: slot)
+            }
+        }
+        if model.editingApp.bundleID == AppTarget.finder.bundleID {
+            Section(L10n.tr("访达导航")) {
+                ForEach(FinderCommand.allCases, id: \.self) { command in
+                    actionItem(.finder(command), for: key, slot: slot)
+                }
+            }
+        }
+        Section("macOS") {
+            ForEach([AgentAction.toggleDisplays, .displaySleep, .lockScreen, .appSwitcher, .showDesktop, .volumeUp, .volumeDown, .appleMenu, .mediaChooser],
+                    id: \.title) { option in
+                actionItem(option, for: key, slot: slot)
+            }
+            Button {
+                onLocateKey(key.id)
+                refreshHotKeys(for: slot)
+            } label: {
+                Label(L10n.tr("选择系统快捷键…"), systemImage: "command")
+            }
+        }
+        Section(L10n.tr("键盘按键")) {
+            ForEach(["up", "down", "left", "right", "ok", "back"], id: \.self) { id in
+                if let action = AgentProfile.defaults.actions[id] {
+                    actionItem(action, for: key, slot: slot)
+                }
+            }
+        }
     }
 
     private func actionItem(_ action: AgentAction?, for key: RemoteKey, slot: String,
@@ -384,7 +405,7 @@ struct KeyMappingEditor: View {
     private var mappingFooter: some View {
         let key = model.keys.first { $0.id == model.slot } ?? model.keys[0]
         let learned = model.editableRemote?.input(for: key.id)
-        let action = model.editableActions[key.id]
+        let action = model.editableActions[key.id] ?? (key.id == "voice" ? model.editableVoiceFallback : nil)
         let detail = footerDetail(for: key, action: action, learned: learned)
         return VStack(alignment: .leading, spacing: 0) {
             if let shortcutPicker, key.actionSlots.contains(shortcutPicker.slot) {
@@ -393,12 +414,19 @@ struct KeyMappingEditor: View {
                     .padding(.vertical, 6)
             }
             if let detail {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(model.error != nil || model.storageError != nil ? .red : .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 6)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(model.error != nil || model.storageError != nil ? .red : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if action == .systemDictation, model.learning == nil {
+                        Button(L10n.tr("打开键盘设置…"), action: SystemDictation.openKeyboardSettings)
+                            .buttonStyle(.link)
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.horizontal, 15)
+                .padding(.vertical, 6)
             }
             Divider()
             HStack(spacing: 6) {
@@ -425,10 +453,12 @@ struct KeyMappingEditor: View {
                 showConfigActions = false
                 model.restoreDefaultActions()
             }
+            .disabled(model.editingCodexPreset)
             WorkspacePopoverAction(L10n.tr("导出配置…")) {
                 showConfigActions = false
                 onCommand(.exportProfile)
             }
+            .disabled(model.editingCodexPreset)
             WorkspacePopoverAction(L10n.tr("导入配置…")) {
                 showConfigActions = false
                 onCommand(.importProfile)
@@ -470,7 +500,15 @@ struct KeyMappingEditor: View {
         if action == .chatGPTDraft {
             return L10n.tr("将 ChatGPT 的按住听写快捷键设为 F5，然后在草稿中确认转写。")
         }
-        if case let .voiceShortcut(provider, shortcut) = action ?? (key.id == "voice" ? model.defaultVoice : nil) {
+        if action == .systemDictation {
+            if captureUnavailable,
+               learned?.hasNativeKeyboardEvent == true || model.remoteDefinition.manifest.behavior.nativeDictationKeys.contains(key.id) {
+                return L10n.tr("当前设备无法可靠改绑，已保留原生按键。")
+            }
+            let usesRemoteMicrophone = model.usesRemoteMicrophone && model.supportsRemoteMicrophone
+            return L10n.tr(usesRemoteMicrophone ? SystemDictation.remoteMicrophoneInstructions : SystemDictation.setupInstructions)
+        }
+        if case let .voiceShortcut(provider, shortcut) = action {
             if captureUnavailable {
                 return L10n.tr("当前设备无法可靠改绑，已保留原生按键。")
             }
@@ -594,8 +632,12 @@ private extension AgentAction {
         case .foregroundKey: "keyboard"
         case .chatBar: "text.bubble"
         case .nextAgent, .appSwitcher: "rectangle.on.rectangle"
-        case .dictation, .chatGPTDraft, .voiceShortcut: "mic"
+        case .dictation, .chatGPTDraft, .systemDictation, .voiceShortcut: "mic"
         case .finder: "arrow.up.and.down.and.arrow.left.and.right"
+        case .codexConversation(.scrollUp): "arrow.up"
+        case .codexConversation(.scrollDown): "arrow.down"
+        case .codexConversation(.sendTranscript): "paperplane"
+        case .codexConversation(.discardConfirmation): "xmark.circle"
         case .displaySleep, .toggleDisplays: "display"
         case .appleMenu: "apple.logo"
         case .lockScreen: "lock"

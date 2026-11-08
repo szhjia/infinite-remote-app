@@ -7,14 +7,31 @@ struct ShortcutSetup: View {
     let title: String
     let instructions: String
     let needsCombination: Bool
+    let initialShortcut: RemoteCore.KeyboardShortcut?
     let cancel: () -> Void
     let save: (RemoteCore.KeyboardShortcut) -> Void
     @State private var shortcut: RemoteCore.KeyboardShortcut?
+
+    init(title: String, instructions: String, needsCombination: Bool,
+         initialShortcut: RemoteCore.KeyboardShortcut? = nil, cancel: @escaping () -> Void,
+         save: @escaping (RemoteCore.KeyboardShortcut) -> Void) {
+        self.title = title
+        self.instructions = instructions
+        self.needsCombination = needsCombination
+        self.initialShortcut = initialShortcut
+        self.cancel = cancel
+        self.save = save
+        _shortcut = State(initialValue: initialShortcut)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.headline)
             Text(instructions).font(.callout).foregroundStyle(.secondary)
+            if initialShortcut != nil {
+                Text(L10n.tr("按下新的快捷键即可替换当前快捷键。"))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             Recorder(label: shortcut?.label ?? L10n.tr("按下快捷键")) { shortcut = $0 }
                 .frame(height: 34)
             if needsCombination, let shortcut, !shortcut.isVoiceCombination {
@@ -23,8 +40,8 @@ struct ShortcutSetup: View {
             HStack {
                 Spacer()
                 Button(L10n.tr("取消"), action: cancel).keyboardShortcut(.cancelAction)
-                Button(L10n.tr("使用快捷键")) { if let shortcut { save(shortcut) } }
-                    .disabled(shortcut == nil || needsCombination && shortcut?.isVoiceCombination != true)
+                Button(L10n.tr(initialShortcut == nil ? "使用快捷键" : "保存修改")) { if let shortcut { save(shortcut) } }
+                    .disabled(shortcut == nil || shortcut == initialShortcut || needsCombination && shortcut?.isVoiceCombination != true)
                     .buttonStyle(.borderedProminent)
             }
         }
@@ -92,16 +109,21 @@ struct ShortcutSetup: View {
 
 @MainActor
 struct MacDictationSetup: View {
-    static let instructions = "在系统键盘设置中开启听写并设定组合键，再录入相同的组合键。请在文本编辑中确认转写。"
-    static let verificationPrompt = "快捷键已保存 · 转写待验证。请在文本编辑器里按遥控器的语音键试一次。"
+    static let compatibilityTitle = "听写快捷键（兼容模式）"
+    static let instructions = "当前应用无法通过菜单启动系统听写时，可录入系统「键盘」设置中已有的听写组合键。"
 
     let model: RemoteModel
     let dismiss: () -> Void
 
+    private var currentShortcut: RemoteCore.KeyboardShortcut? {
+        guard case let .voiceShortcut(.macOS, shortcut) = model.defaultVoice else { return nil }
+        return shortcut
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ShortcutSetup(title: VoiceProvider.macOS.title, instructions: L10n.tr(Self.instructions),
-                          needsCombination: true, cancel: dismiss) { shortcut in
+            ShortcutSetup(title: L10n.tr(Self.compatibilityTitle), instructions: L10n.tr(Self.instructions),
+                          needsCombination: true, initialShortcut: currentShortcut, cancel: dismiss) { shortcut in
                 if model.setDefaultVoice(.voiceShortcut(.macOS, shortcut)) { dismiss() }
             }
             if let error = model.storageError {

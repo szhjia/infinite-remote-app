@@ -224,7 +224,7 @@ struct Workspace: View {
                     HStack {
                         Text(profile.name).lineLimit(1)
                         Spacer()
-                        if profile.id == AgentProfile.defaults.id {
+                        if profile.id == AgentProfile.defaults.id || model.isCodexPreset(profile) {
                             Text(L10n.tr("只读")).foregroundStyle(.secondary)
                         }
                         if active { Text(L10n.tr("当前使用")).foregroundStyle(accent) }
@@ -298,12 +298,18 @@ struct Workspace: View {
         if slot == nil && provider == .macOS {
             MacDictationSetup(model: model) { sheet = nil }
         } else if let slot {
+            let currentShortcut: RemoteCore.KeyboardShortcut? = switch model.editableActions[slot] {
+            case let .voiceShortcut(boundProvider, shortcut) where boundProvider == provider: shortcut
+            case let .shortcut(shortcut) where provider == nil: shortcut
+            default: nil
+            }
             ShortcutSetup(
-                title: provider?.title ?? L10n.tr("录入应用快捷键"),
+                title: provider == .macOS ? L10n.tr(MacDictationSetup.compatibilityTitle) : L10n.tr("录入应用快捷键"),
                 instructions: provider == .macOS
                     ? L10n.tr(MacDictationSetup.instructions)
                     : L10n.tr("按下目标应用使用的快捷键。"),
                 needsCombination: provider != nil,
+                initialShortcut: currentShortcut,
                 cancel: { sheet = nil },
                 save: { shortcut in
                     model.setAction(provider.map { .voiceShortcut($0, shortcut) } ?? .shortcut(shortcut), for: slot)
@@ -313,7 +319,7 @@ struct Workspace: View {
     }
 
     private func exportProfile() {
-        guard let profile = model.profile else { return }
+        guard let profile = model.profile, !model.isCodexPreset(profile) else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "\(profile.name.replacingOccurrences(of: "/", with: "-")).json"

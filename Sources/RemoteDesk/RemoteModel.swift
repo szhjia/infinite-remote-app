@@ -42,6 +42,20 @@ enum RemoteReadiness: Equatable {
 
 @MainActor @Observable
 final class RemoteModel {
+    private static let codexPresetID = "builtin-codex-continuation"
+    private static let codexPhysicalKeys = [0x3E: "voice", 0x28: "ok", 0xF1: "back", 0x52: "up", 0x51: "down"]
+    private static let codexCaptureUnavailable = "无法接管遥控器按键，macOS 仍可能收到原生按键。"
+    private static let codexTargetUnavailable = "无法确认当前 Codex 对话或按键目标。"
+
+    private enum MicrophoneBlock: String {
+        case off = "遥控器麦克风未开启。"
+        case disconnected = "遥控器麦克风未连接。"
+        case paused = "遥控器麦克风已暂停。"
+        case inputUnavailable = "遥控器按键不可用，暂时无法收音。"
+        case missingLoopback = "未检测到 BlackHole 2ch，遥控器麦克风尚未连接。"
+        case needsBluetooth = "遥控器麦克风需要蓝牙权限。"
+    }
+
     struct Activity: Identifiable {
         let id = UUID()
         let time: Date
@@ -98,8 +112,8 @@ final class RemoteModel {
     private(set) var canPost = false
     private(set) var canUseAccessibility = false
     private(set) var capturesKeyboard = false
-    private(set) var usesRemoteMicrophone = false
     let remoteMicrophone = RemoteMicrophone()
+    private var microphoneBlock: MicrophoneBlock? = .disconnected
     private(set) var activeBundleID: String?
     private var contextGeneration = 0
     private var editingBundleID: String?
@@ -129,13 +143,20 @@ final class RemoteModel {
     private let hid: any RemoteInputSource
     private let storeURL: URL
     private let permissionAccess: PermissionAccess
+    private let microphoneRequirements: RemoteMicrophone.Requirements
     private var catalog: RemoteCatalog
     var onModelChanged: (() -> Void)?
     private let runAction: @MainActor (AgentAction, AppTarget?) async throws -> Void
     private let foreground: @MainActor () -> ForegroundContext?
     private let isChatGPTEnabled: Bool
     private let finderSupportsNavigation: @MainActor (ForegroundContext) -> Bool
+    private let startSystemDictation: @MainActor (ForegroundContext) throws -> Void
     private let postVoice: @MainActor (KeyboardShortcut, Bool) throws -> Void
+    private let codexAccess: CodexConversationControl.Access
+    private let codexDraft = CodexDraftConfirmation()
+    private var codexVoice: (input: InputCode, origin: RemoteInputOrigin, context: ForegroundContext)?
+    private var codexDraftTask: Task<Void, Never>?
+    private var codexScroll: (input: InputCode, origin: RemoteInputOrigin, task: Task<Void, Never>)?
     private var heldVoice: (input: InputCode, origin: RemoteInputOrigin?, shortcut: KeyboardShortcut)?
     private var microphonePress: (input: InputCode, origin: RemoteInputOrigin?, context: ForegroundContext)?
     private var draftActions: [String: AgentAction]?
@@ -178,10 +199,14 @@ final class RemoteModel {
          foreground: @escaping @MainActor () -> ForegroundContext? = ForegroundContext.current,
          isChatGPTEnabled: Bool = AgentRunner.isChatGPTEnabled,
          finderSupportsNavigation: @escaping @MainActor (ForegroundContext) -> Bool = { _ in true },
+         startSystemDictation: @escaping @MainActor (ForegroundContext) throws -> Void = SystemDictation.start,
          postVoice: @escaping @MainActor (KeyboardShortcut, Bool) throws -> Void = AgentRunner.postVoiceEdge,
+         microphoneRequirements: RemoteMicrophone.Requirements = .system,
+         codexAccess: CodexConversationControl.Access = .system,
          runAction: @escaping @MainActor (AgentAction, AppTarget?) async throws -> Void) {
         self.dictation = dictation
         self.permissionAccess = permissions
+        self.microphoneRequirements = microphoneRequirements
         self.canListen = permissions.listenEvents?() ?? false
         self.canPost = permissions.postEvents()
         self.canUseAccessibility = permissions.accessibility()
@@ -193,7 +218,9 @@ final class RemoteModel {
         self.foreground = foreground
         self.isChatGPTEnabled = isChatGPTEnabled
         self.finderSupportsNavigation = finderSupportsNavigation
+        self.startSystemDictation = startSystemDictation
         self.postVoice = postVoice
+        self.codexAccess = codexAccess
         self.activeBundleID = foreground()?.bundleID
         self.powerHoldDelay = powerHoldDelay
         self.doubleClickDelay = doubleClickDelay
@@ -205,7 +232,7 @@ final class RemoteModel {
                 config = decoded
             } else if (1..<Configuration.currentVersion).contains(decoded.version) {
                 config = decoded
-                config.upgradeLegacy()
+                config.upgradeLegacy(installedModelIDs: Set(catalog.models.map(\.id)))
                 do {
                     try Self.backUp(original, version: decoded.version, at: storeURL)
                     didUpgrade = true
@@ -229,11 +256,12 @@ final class RemoteModel {
         hid.onAmbiguousDevices = { [weak self] devices in self?.updateAmbiguity(devices) }
         hid.onMonitorState = { [weak self] state in self?.updateMonitorState(state) }
         hid.onEvent = { [weak self] device, event in self?.receive(device, event) }
-        hid.onKeyboardCapture = { [weak self] capture in self?.capturesKeyboard = capture }
+        hid.onKeyboardCapture = { [weak self] capture in self?.keyboardCaptureChanged(capture) }
         remoteMicrophone.canStream = { [weak self] in
-            guard let self, usesRemoteMicrophone, let press = microphonePress else { return false }
+            guard let self, microphoneBlock == nil, let press = microphonePress else { return false }
             return press.context.matches(foreground())
         }
+        remoteMicrophone.onBluetoothAuthorizationChanged = { [weak self] in self?.updateMicrophoneConnection() }
         if didUpgrade { save() }
     }
 
@@ -452,9 +480,41 @@ final class RemoteModel {
     }
 
     private func profiles(for definition: RemoteDefinition, app: AppTarget) -> [AgentProfile] {
-        [defaultProfile(for: definition, target: app)] + config.agents.filter {
-            $0.modelID == definition.id && $0.target?.bundleID == app.bundleID && $0.id != AgentProfile.defaults.id
+        let defaults = defaultProfile(for: definition, target: app)
+        let preset = codexPreset(for: definition, app: app, defaults: defaults)
+        return [defaults] + [preset].compactMap { $0 } + config.agents.filter {
+            $0.modelID == definition.id && $0.target?.bundleID == app.bundleID
+                && $0.id != AgentProfile.defaults.id && $0.id != Self.codexPresetID
         }
+    }
+
+    private func codexPreset(for definition: RemoteDefinition, app: AppTarget, defaults: AgentProfile) -> AgentProfile? {
+        guard isChatGPTEnabled, definition.id == "xiaomi-2-pro", app.bundleID == AppTarget.chatGPT.bundleID,
+              definition.manifest.behavior.nativeDictationKeys.contains("voice"),
+              Set(Self.codexPhysicalKeys.values).isSubset(of: definition.actionSlots) else { return nil }
+        var actions = defaults.actions
+        actions["voice"] = .chatGPTDraft
+        actions["ok"] = .codexConversation(.sendTranscript)
+        actions["back"] = .codexConversation(.discardConfirmation)
+        for (key, command) in [("up", CodexConversationCommand.scrollUp), ("down", .scrollDown)] {
+            actions[key] = .codexConversation(command)
+            if definition.actionSlots.contains(key + "-long") { actions[key + "-long"] = .codexConversation(command) }
+        }
+        return AgentProfile(id: Self.codexPresetID, name: L10n.tr("Codex 续聊（实验）"),
+                            target: app, actions: actions, modelID: definition.id)
+    }
+
+    func isCodexPreset(_ profile: AgentProfile) -> Bool { profile.id == Self.codexPresetID }
+    var editingCodexPreset: Bool { profile.map(isCodexPreset) == true }
+
+    private func usesCodexPreset(in context: ForegroundContext?) -> Bool {
+        guard context?.bundleID == AppTarget.chatGPT.bundleID, isChatGPTEnabled,
+              remoteDefinition.id == "xiaomi-2-pro",
+              config.activeProfileID(modelID: remoteDefinition.id, bundleID: AppTarget.chatGPT.bundleID)
+                == Self.codexPresetID else { return false }
+        let definition = remoteDefinition
+        return definition.manifest.behavior.nativeDictationKeys.contains("voice")
+            && Set(Self.codexPhysicalKeys.values).isSubset(of: definition.actionSlots)
     }
 
     private func selectProfileID(_ id: String, in updated: inout Configuration, target: AppTarget? = nil) {
@@ -479,19 +539,42 @@ final class RemoteModel {
         }
     }
 
-    var defaultVoice: AgentAction? { config.defaultVoiceByModel?[remoteDefinition.id] }
+    var defaultVoice: AgentAction? {
+        guard hasVoiceKey else { return nil }
+        let modelID = remoteDefinition.id
+        if let action = config.defaultVoiceByModel?[modelID] { return action }
+        if config.disabledDefaultVoiceModelIDs?.contains(modelID) == true { return nil }
+        return .systemDictation
+    }
+
+    var editableVoiceFallback: AgentAction? { inheritedVoice(for: editableActions) }
+
+    private func inheritedVoice(for actions: [String: AgentAction]) -> AgentAction? {
+        let action = defaultVoice
+        // A new built-in default must not shadow existing app-specific voice gestures.
+        if action == .systemDictation, actions["voice-double"] != nil || actions["voice-long"] != nil { return nil }
+        return action
+    }
 
     @discardableResult
     func setDefaultVoice(_ action: AgentAction?) -> Bool {
-        if let action {
+        guard hasVoiceKey else { return false }
+        if let action, action != .systemDictation {
             guard case let .voiceShortcut(.macOS, shortcut) = action, shortcut.isVoiceCombination else { return false }
         }
+        let modelID = remoteDefinition.id
         var updated = config
         var voices = updated.defaultVoiceByModel ?? [:]
-        voices[remoteDefinition.id] = action
-        updated.defaultVoiceByModel = voices
+        voices[modelID] = action == .systemDictation ? nil : action
+        updated.defaultVoiceByModel = voices.isEmpty ? nil : voices
+        var disabled = Set(updated.disabledDefaultVoiceModelIDs ?? [])
+        if action == nil { disabled.insert(modelID) }
+        else { disabled.remove(modelID) }
+        updated.disabledDefaultVoiceModelIDs = disabled.isEmpty ? nil : disabled.sorted()
         guard save(updated) else { return false }
         cancelDictation()
+        feedback = nil
+        error = nil
         return true
     }
 
@@ -501,7 +584,7 @@ final class RemoteModel {
            isChatGPTEnabled || app.bundleID != AppTarget.chatGPT.bundleID {
             let configured = profile(for: remoteDefinition, app: app).actions
             if let action = configured[slot] { return action }
-            if slot == "voice" { return defaultVoice }
+            if slot == "voice" { return inheritedVoice(for: configured) }
             return nil
         }
         if slot == "voice" { return defaultVoice }
@@ -569,26 +652,69 @@ final class RemoteModel {
         updateMicrophoneConnection()
     }
 
+    private func keyboardCaptureChanged(_ captured: Bool) {
+        capturesKeyboard = captured
+        guard !captured else { return }
+        cancelCodexDraft()
+        cancelCodexScroll()
+        if isEnabled, !isDiagnosing, usesCodexPreset(in: foreground()) {
+            feedback = L10n.tr(Self.codexCaptureUnavailable)
+        }
+    }
+
     var supportsRemoteMicrophone: Bool {
         connectedDevice?.vendor == 0x2717 && connectedDevice?.product == 0x32B8
     }
 
-    func toggleRemoteMicrophone() {
-        usesRemoteMicrophone.toggle()
-        if !usesRemoteMicrophone { microphonePress = nil }
-        updateMicrophoneConnection()
+    var showsRemoteMicrophoneStatus: Bool {
+        remoteDefinition.id == RemoteDefinition.xiaomiID || supportsRemoteMicrophone
+    }
+
+    var usesRemoteMicrophone: Bool {
+        showsRemoteMicrophoneStatus && (config.remoteMicrophoneEnabledByModel?[remoteDefinition.id] ?? canSave)
+    }
+
+    var needsRemoteMicrophoneBluetooth: Bool { microphoneBlock == .needsBluetooth }
+
+    var remoteMicrophoneStatus: String {
+        if let microphoneBlock { return L10n.tr(microphoneBlock.rawValue) }
+        return remoteMicrophone.status ?? L10n.tr("遥控器麦克风未连接。")
+    }
+
+    func setRemoteMicrophoneEnabled(_ enabled: Bool) {
+        guard supportsRemoteMicrophone, usesRemoteMicrophone != enabled else { return }
+        var updated = config
+        var choices = updated.remoteMicrophoneEnabledByModel ?? [:]
+        choices[remoteDefinition.id] = enabled
+        updated.remoteMicrophoneEnabledByModel = choices
+        if !save(updated), !enabled {
+            // Turning off capture takes effect now even if the preference cannot be written.
+            config.remoteMicrophoneEnabledByModel = choices
+            updateMicrophoneConnection()
+        }
     }
 
     private func updateMicrophoneConnection() {
-        let enabled = usesRemoteMicrophone && supportsRemoteMicrophone && isEnabled && !isDiagnosing && canReadKeys
+        let block: MicrophoneBlock?
+        if !usesRemoteMicrophone { block = .off }
+        else if !supportsRemoteMicrophone { block = .disconnected }
+        else if !isEnabled || isDiagnosing { block = .paused }
+        else if !canReadKeys { block = .inputUnavailable }
+        else if !microphoneRequirements.loopbackAvailable() { block = .missingLoopback }
+        else if !microphoneRequirements.bluetoothAuthorized() { block = .needsBluetooth }
+        else { block = nil }
+        if microphoneBlock != block { microphoneBlock = block }
+        let enabled = block == nil
+        if !enabled { microphonePress = nil }
         remoteMicrophone.connect(enabled ? hid.selectedBluetoothIdentifier : nil, enabled: enabled)
     }
 
     func foregroundChanged() {
         contextGeneration &+= 1
-        activeBundleID = foreground()?.bundleID
+        let current = foreground()
+        activeBundleID = current?.bundleID
         cancelGestures()
-        cancelDictation()
+        cancelDictation(preserveMicrophone: microphonePress?.context.matches(current) == true)
         updateCapture()
     }
 
@@ -628,6 +754,7 @@ final class RemoteModel {
             cancelGestures()
             onDismissMedia?()
         }
+        updateMicrophoneConnection()
     }
 
     private func updateSelection() {
@@ -671,6 +798,10 @@ final class RemoteModel {
     }
 
     func requestVoiceBluetooth() {
+        if microphoneRequirements.bluetoothAuthorized() {
+            updateMicrophoneConnection()
+            return
+        }
         if !remoteMicrophone.requestBluetoothAuthorization() { openPrivacy("Privacy_Bluetooth") }
     }
 
@@ -733,7 +864,7 @@ final class RemoteModel {
     }
 
     func setAction(_ action: AgentAction?, for slot: String) {
-        guard profile != nil, !isGlobalSlot(slot), remoteDefinition.actionSlots.contains(slot) else { return }
+        guard profile != nil, !editingCodexPreset, !isGlobalSlot(slot), remoteDefinition.actionSlots.contains(slot) else { return }
         cancelLearning()
         var actions = editableActions
         actions[slot] = action
@@ -746,6 +877,7 @@ final class RemoteModel {
     }
 
     func restoreDefaultActions() {
+        guard !editingCodexPreset else { return }
         cancelLearning()
         let defaults = defaultProfile.actions
         draftActions = profile?.actions == defaults ? nil : defaults
@@ -756,7 +888,7 @@ final class RemoteModel {
     @discardableResult
     func saveConfigurationChanges(as name: String? = nil) -> Bool {
         guard hasConfigurationChanges, learning == nil, calibrationConflict == nil,
-              remoteDefinition.accepts(actions: editableActions) else { return false }
+              editingCodexPreset || remoteDefinition.accepts(actions: editableActions) else { return false }
         var updated = config
         if let draftActions {
             if needsProfileName {
@@ -886,8 +1018,12 @@ final class RemoteModel {
             feedback = L10n.tr("此键尚未分配动作")
             return
         }
+        if case .codexConversation = action {
+            feedback = L10n.tr("请使用实体遥控器按键。")
+            return
+        }
         if action.isVoiceTrigger {
-            feedback = L10n.tr("请按住实体语音键开始听写。")
+            feedback = L10n.tr(action == .systemDictation ? "请按一下遥控器语音键开始系统听写。" : "请按住实体语音键开始听写。")
         } else {
             perform(action, context: isGlobalSlot(id) ? nil : context)
         }
@@ -939,6 +1075,11 @@ final class RemoteModel {
     private func releaseInput(_ input: InputCode, origin: RemoteInputOrigin?) {
         finishHardwarePress(input, origin: origin)
         finishGesture(input, origin: origin)
+        if let scroll = codexScroll, scroll.input == input, scroll.origin == origin { cancelCodexScroll() }
+        if let voice = codexVoice, voice.input == input, voice.origin == origin {
+            if codexCaptureIsCurrent(voice) { codexDraft.release() }
+            else { cancelCodexDraft() }
+        }
         if let press = microphonePress, press.input == input, press.origin == origin {
             microphonePress = nil
             remoteMicrophone.voicePressDidEnd()
@@ -951,6 +1092,8 @@ final class RemoteModel {
     }
 
     private func interruptInput(_ matches: (InputCode, RemoteInputOrigin?) -> Bool) {
+        if let scroll = codexScroll, matches(scroll.input, scroll.origin) { cancelCodexScroll() }
+        if let voice = codexVoice, matches(voice.input, voice.origin) { cancelCodexDraft() }
         for (id, press) in gestures.filter({ matches($0.value.input, $0.value.origin) }) {
             press.holdTask?.cancel()
             gestures[id] = nil
@@ -1021,6 +1164,7 @@ final class RemoteModel {
         } else { nativePanelKey = false }
         if onMediaKey?(key, nativePanelKey) == true {
             cancelGestures()
+            cancelCodexDraft()
             return
         }
         if isGlobalSlot(key), let action {
@@ -1029,6 +1173,11 @@ final class RemoteModel {
             return
         }
         guard !isRunning, !dictation.phase.active, heldVoice == nil else { return }
+        if let context, usesCodexPreset(in: context),
+           Self.codexPhysicalKeys[input.keyboardUsage ?? -1] != nil || Self.codexPhysicalKeys.values.contains(key) {
+            handleCodexKey(key, input: input, origin: origin, captured: captured, context: context)
+            return
+        }
         if let action, action.isVoiceTrigger {
             startVoice(action, key: key, input: input, origin: origin, context: context)
             return
@@ -1066,11 +1215,136 @@ final class RemoteModel {
         if activity.count > 20 { activity.removeLast() }
     }
 
-    private func cancelDictation() {
-        cancelMicrophonePress()
+    private func cancelDictation(preserveMicrophone: Bool = false) {
+        cancelCodexDraft()
+        if !preserveMicrophone { cancelMicrophonePress() }
         endHeldVoice()
         dictationInput = nil
         dictation.cancel(L10n.tr("听写已取消，未发送。"))
+    }
+
+    private func cancelCodexDraft() {
+        codexDraftTask?.cancel()
+        codexDraftTask = nil
+        codexVoice = nil
+        codexDraft.cancel()
+    }
+
+    private func cancelCodexScroll() {
+        codexScroll?.task.cancel()
+        codexScroll = nil
+    }
+
+    private func codexCaptureIsCurrent(_ voice: (input: InputCode, origin: RemoteInputOrigin, context: ForegroundContext)) -> Bool {
+        let enter = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x28, report: voice.input.report, value: 1)
+        return isEnabled && canReadKeys && canUseAccessibility && canPost && !isDiagnosing && learning == nil
+            && calibrationConflict == nil && usesCodexPreset(in: voice.context) && voice.context.matches(foreground())
+            && hid.preservesNativeF5 && !hid.captures(voice.input, from: voice.origin)
+            && hid.captures(enter, from: voice.origin)
+    }
+
+    private func handleCodexKey(_ key: String, input: InputCode, origin: RemoteInputOrigin?, captured: Bool,
+                                context: ForegroundContext) {
+        guard Self.codexPhysicalKeys[input.keyboardUsage ?? -1] == key, let origin else {
+            cancelCodexDraft()
+            cancelCodexScroll()
+            feedback = L10n.tr(Self.codexTargetUnavailable)
+            return
+        }
+        if key == "voice" {
+            cancelCodexDraft()
+            let voice = (input: input, origin: origin, context: context)
+            // F5 is delivered by macOS. The ability to suppress Return only
+            // determines whether this press can later authorize sending.
+            if !captured, hid.preservesNativeF5, context.matches(foreground()) {
+                armMicrophone(input: input, origin: origin, context: context)
+            }
+            guard !captured, codexCaptureIsCurrent(voice) else {
+                feedback = L10n.tr(Self.codexCaptureUnavailable)
+                return
+            }
+            guard let session = codexAccess.session(context), codexDraft.begin(session) else {
+                feedback = L10n.tr(Self.codexTargetUnavailable)
+                return
+            }
+            codexVoice = voice
+            feedback = nil
+            let deadline = ContinuousClock.now + .seconds(120)
+            codexDraftTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                    guard let self else { return }
+                    guard self.codexDraft.active, ContinuousClock.now < deadline else {
+                        self.cancelCodexDraft()
+                        return
+                    }
+                    guard self.codexCaptureIsCurrent(voice) else {
+                        self.cancelCodexDraft()
+                        return
+                    }
+                    self.codexDraft.sample()
+                }
+            }
+            return
+        }
+        guard captured, canUseAccessibility, canPost else {
+            cancelCodexDraft()
+            cancelCodexScroll()
+            feedback = L10n.tr(Self.codexCaptureUnavailable)
+            return
+        }
+        switch key {
+        case "ok":
+            guard let voice = codexVoice, voice.origin.endpoint == origin.endpoint,
+                  codexCaptureIsCurrent(voice) else {
+                cancelCodexDraft()
+                feedback = L10n.tr("没有可确认发送的遥控器听写草稿。")
+                return
+            }
+            switch codexDraft.confirm() {
+            case .unavailable:
+                feedback = L10n.tr("没有可确认发送的遥控器听写草稿。")
+            case .requested:
+                cancelCodexDraft()
+                feedback = L10n.tr("已请求 Codex 发送草稿。")
+            case .unconfirmed:
+                cancelCodexDraft()
+                feedback = L10n.tr("无法确认 Codex 是否发送了草稿，请查看对话。")
+            }
+        case "back":
+            cancelCodexDraft()
+            feedback = L10n.tr("已取消遥控器发送确认，草稿保留。")
+        case "up", "down":
+            cancelCodexScroll()
+            guard let scroll = codexAccess.scroll(context, key == "up" ? .scrollUp : .scrollDown), scroll() else {
+                feedback = L10n.tr(Self.codexTargetUnavailable)
+                return
+            }
+            feedback = nil
+            let task = Task { [weak self, powerHoldDelay] in
+                do { try await Task.sleep(for: powerHoldDelay) } catch { return }
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    guard self.isEnabled, self.canReadKeys, self.canUseAccessibility, self.canPost,
+                          self.usesCodexPreset(in: context), context.matches(self.foreground()) else {
+                        self.cancelCodexScroll()
+                        return
+                    }
+                    guard self.hid.captures(input, from: origin) else {
+                        self.keyboardCaptureChanged(false)
+                        return
+                    }
+                    guard scroll() else {
+                        self.cancelCodexScroll()
+                        self.feedback = L10n.tr(Self.codexTargetUnavailable)
+                        return
+                    }
+                    do { try await Task.sleep(for: .milliseconds(130)) } catch { return }
+                }
+            }
+            codexScroll = (input, origin, task)
+        default: break
+        }
     }
 
     private func cancelMicrophonePress() {
@@ -1080,7 +1354,7 @@ final class RemoteModel {
 
     private func armMicrophone(input: InputCode, origin: RemoteInputOrigin?, context: ForegroundContext) {
         // An alternate key can trigger dictation, but it cannot authorize the physical microphone button.
-        guard usesRemoteMicrophone, microphonePress == nil, remoteDefinition.slot(for: input) == "voice" else { return }
+        guard microphoneBlock == nil, microphonePress == nil, remoteDefinition.slot(for: input) == "voice" else { return }
         microphonePress = (input, origin, context)
         remoteMicrophone.voicePressDidBegin()
     }
@@ -1107,6 +1381,18 @@ final class RemoteModel {
         }
         if input.hasNativeKeyboardEvent && !captured {
             feedback = L10n.tr("当前设备无法可靠改绑，已保留原生按键。")
+            return
+        }
+        if action == .systemDictation {
+            guard canUseAccessibility else { requestedPermission = .accessibility; return }
+            feedback = nil
+            do {
+                try startSystemDictation(context)
+                armMicrophone(input: input, origin: origin, context: context)
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+            }
             return
         }
         guard canPost else { requestedPermission = .accessibility; return }
@@ -1255,6 +1541,7 @@ final class RemoteModel {
     }
 
     func cancelGestures() {
+        cancelCodexScroll()
         for press in gestures.values { press.holdTask?.cancel() }
         for tap in pendingTaps.values { tap.task.cancel() }
         gestures.removeAll()
@@ -1414,8 +1701,11 @@ extension AgentAction {
         case .nextAgent: L10n.tr("切换到下一个 Agent")
         case .dictation: L10n.tr("旧版 ChatGPT 听写（可自动发送）")
         case .chatGPTDraft: L10n.tr("ChatGPT 听写草稿")
+        case .systemDictation: L10n.tr("macOS 内置听写")
+        case .voiceShortcut(.macOS, _): L10n.tr("听写快捷键")
         case let .voiceShortcut(provider, _): provider.title
         case let .finder(command): command.title
+        case let .codexConversation(command): command.title
         case .displaySleep: L10n.tr("显示器休眠")
         case .toggleDisplays: L10n.tr("关闭或恢复显示器")
         case .appleMenu: L10n.tr("打开苹果菜单")

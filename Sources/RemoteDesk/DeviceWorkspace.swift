@@ -67,31 +67,11 @@ struct DeviceWorkspace: View {
     }
 
     private var chatGPTMissingNotice: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { chatGPTMissingActions }
-                    .fixedSize(horizontal: true, vertical: false)
-                VStack(alignment: .leading, spacing: 5) { chatGPTMissingActions }
-            }
-            if model.defaultVoice != nil {
-                Text(L10n.tr(MacDictationSetup.verificationPrompt))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var chatGPTMissingActions: some View {
         Label(L10n.tr("未安装"), systemImage: "app.dashed")
             .font(.callout.weight(.medium))
-        if model.hasVoiceKey {
-            Button(L10n.tr("设置 macOS 听写")) { onEditorCommand(.recordShortcut(slot: nil, provider: .macOS)) }
-                .fixedSize()
-        }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func refreshChatGPTInstallation() {

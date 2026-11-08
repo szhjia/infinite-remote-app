@@ -122,12 +122,14 @@ public enum AgentAction: Codable, Equatable, Sendable {
     case mediaChooser
     case appSwitcher
     case finder(FinderCommand)
+    case codexConversation(CodexConversationCommand)
     case chatGPTDraft
+    case systemDictation
     case voiceShortcut(VoiceProvider, KeyboardShortcut)
 
     public var isVoiceTrigger: Bool {
         switch self {
-        case .dictation, .chatGPTDraft, .voiceShortcut(.macOS, _): true
+        case .dictation, .chatGPTDraft, .systemDictation, .voiceShortcut(.macOS, _): true
         default: false
         }
     }
@@ -136,6 +138,10 @@ public enum AgentAction: Codable, Equatable, Sendable {
         if case .voiceShortcut(.weType, _) = self { return true }
         return false
     }
+}
+
+public enum CodexConversationCommand: String, Codable, Sendable {
+    case scrollUp, scrollDown, sendTranscript, discardConfirmation
 }
 
 public enum FinderCommand: String, Codable, CaseIterable, Sendable {
@@ -216,13 +222,15 @@ public struct AgentProfile: Identifiable, Codable, Equatable, Sendable {
 }
 
 public struct Configuration: Codable, Equatable, Sendable {
-    public static let currentVersion = 11
+    public static let currentVersion = 12
     public var version = Self.currentVersion
     public var activeAgentID = AgentProfile.defaults.id
     public var activeAgentIDsByModel: [String: String]?
     public var activeProfilesByApp: [String: [String: String]]?
     public var addedAppsByModel: [String: [AppTarget]]?
     public var defaultVoiceByModel: [String: AgentAction]?
+    public var disabledDefaultVoiceModelIDs: [String]?
+    public var remoteMicrophoneEnabledByModel: [String: Bool]?
     public var selectedDevice: DeviceID?
     public var selectedModelID: String?
     public var verifiedRemoteDevices: [DeviceID]?
@@ -231,11 +239,19 @@ public struct Configuration: Codable, Equatable, Sendable {
 
     public init() {}
 
-    public mutating func upgradeLegacy() {
-        if version == 9 || version == 10 {
-            defaultVoiceByModel = defaultVoiceByModel?.filter { !$0.value.isRemovedVoiceBinding }
-            for index in agents.indices {
-                agents[index].actions = agents[index].actions.filter { !$0.value.isRemovedVoiceBinding }
+    public mutating func upgradeLegacy(installedModelIDs: Set<String> = []) {
+        if (9...11).contains(version) {
+            if version < 11 {
+                defaultVoiceByModel = defaultVoiceByModel?.filter { !$0.value.isRemovedVoiceBinding }
+                for index in agents.indices {
+                    agents[index].actions = agents[index].actions.filter { !$0.value.isRemovedVoiceBinding }
+                }
+            }
+            if let defaults = defaultVoiceByModel {
+                // The legacy editor saved a dictionary even after clearing its last binding.
+                // Missing entries in an existing dictionary previously meant no default action.
+                let disabled = installedModelIDs.subtracting(defaults.keys)
+                if !disabled.isEmpty { disabledDefaultVoiceModelIDs = disabled.sorted() }
             }
             version = Self.currentVersion
             return

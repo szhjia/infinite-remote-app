@@ -13,7 +13,6 @@ struct SetupGuide: View {
     @State private var stage: SetupStage
     @State private var waitsForRemoteOnResume: Bool
     @State private var voiceDriverReady = false
-    @State private var showsMacDictationSetup = false
     @AccessibilityFocusState private var headingFocused: Bool
 
     init(model: RemoteModel, library: ResourceLibrary, stage: SetupStage,
@@ -68,9 +67,6 @@ struct SetupGuide: View {
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         .background(Color(nsColor: .windowBackgroundColor))
         .focusEffectDisabled(!showsKeyboardFocus())
-        .sheet(isPresented: $showsMacDictationSetup) {
-            MacDictationSetup(model: model) { showsMacDictationSetup = false }
-        }
         .onChange(of: readiness.canFinish, initial: true) { _, canFinish in
             if waitsForRemoteOnResume && stage == .permissions && canFinish {
                 stage = .ready
@@ -99,17 +95,10 @@ struct SetupGuide: View {
             if let previous = stage.adjacent(-1) {
                 Button(L10n.tr("上一步")) { stage = previous }
             }
-            if stage == .ready && canAdvance && model.hasVoiceKey && model.defaultVoice == nil {
-                Button(L10n.tr("稍后设置"), action: advance)
-                Button(L10n.tr("设置 macOS 听写")) { showsMacDictationSetup = true }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-            } else {
-                Button(primaryTitle, action: advance)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canAdvance)
-            }
+            Button(primaryTitle, action: advance)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdvance)
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 16)
@@ -120,7 +109,7 @@ struct SetupGuide: View {
         case .welcome: L10n.tr("开始设置")
         case .voiceDriver: L10n.tr(voiceDriverReady ? "继续" : "跳过此步")
         case .remote, .permissions: L10n.tr("继续")
-        case .ready: L10n.tr("配置第一个按键")
+        case .ready: L10n.tr("打开按键映射")
         }
     }
 
@@ -204,9 +193,8 @@ struct SetupGuide: View {
 
     private var readyDetail: String {
         guard readiness.canFinish else { return "请返回上一步检查连接和权限。" }
-        guard model.hasVoiceKey else { return "为第一个按键选一个动作，就可以试用遥控器。" }
-        if model.defaultVoice != nil { return MacDictationSetup.verificationPrompt }
-        return "设置 macOS 听写后，可以用遥控器的语音键开始听写。"
+        if model.hasVoiceKey { return "可以在按键映射中设置语音键和其他按键。" }
+        return "为第一个按键选一个动作，就可以试用遥控器。"
     }
 }
 
@@ -230,6 +218,7 @@ private struct SetupRemoteStep: View {
                     Image(nsImage: definition.artwork).resizable().scaledToFit().accessibilityHidden(true)
                 } action: {
                     connectionStatus
+                    microphoneBluetoothPermission
                 }
             } else if let source, let listing {
                 if listings.count > 1 {
@@ -263,16 +252,6 @@ private struct SetupRemoteStep: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            if model.supportsRemoteMicrophone, BlackHoleDevice.currentID() != nil {
-                HStack(spacing: 10) {
-                    Label(L10n.tr(bluetoothAuthorized ? "语音蓝牙已授权" : "机身麦克风需要蓝牙权限"),
-                          systemImage: bluetoothAuthorized ? "checkmark.circle.fill" : "mic")
-                        .foregroundStyle(bluetoothAuthorized ? Color.green : Color.secondary)
-                    if !bluetoothAuthorized {
-                        Button(L10n.tr("授权…"), action: model.requestVoiceBluetooth)
-                    }
-                }
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
@@ -285,6 +264,20 @@ private struct SetupRemoteStep: View {
             }
         }
         .onDisappear { installTask?.cancel() }
+    }
+
+    @ViewBuilder
+    private var microphoneBluetoothPermission: some View {
+        if model.supportsRemoteMicrophone, BlackHoleDevice.currentID() != nil {
+            HStack(spacing: 10) {
+                Label(L10n.tr(bluetoothAuthorized ? "语音蓝牙已授权" : "遥控器麦克风需要蓝牙权限"),
+                      systemImage: bluetoothAuthorized ? "checkmark.circle.fill" : "mic")
+                    .foregroundStyle(bluetoothAuthorized ? Color.green : Color.secondary)
+                if !bluetoothAuthorized {
+                    Button(L10n.tr("授权…"), action: model.requestVoiceBluetooth)
+                }
+            }
+        }
     }
 
     private func deviceCard<Artwork: View, Action: View>(

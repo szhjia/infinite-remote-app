@@ -81,7 +81,8 @@ enum AgentRunner {
             try SystemActions.showDesktop()
         case .volumeUp, .volumeDown:
             try SystemActions.changeVolume(up: action == .volumeUp)
-        case .mediaChooser, .appSwitcher, .dictation, .openLink, .chatBar, .nextAgent, .chatGPTDraft, .voiceShortcut:
+        case .mediaChooser, .appSwitcher, .dictation, .openLink, .chatBar, .nextAgent,
+             .codexConversation, .chatGPTDraft, .systemDictation, .voiceShortcut:
             throw Failure.unsupportedAction
         }
     }
