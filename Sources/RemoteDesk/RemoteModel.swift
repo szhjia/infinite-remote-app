@@ -167,6 +167,7 @@ final class RemoteModel {
     private var learningTask: Task<Void, Never>?
     private let powerHoldDelay: Duration
     private let doubleClickDelay: Duration
+    private let gestureNow: @MainActor () -> ContinuousClock.Instant
     private var gestures: [String: GesturePress] = [:]
     private var pendingTaps: [String: PendingTap] = [:]
     private struct AliasedPress {
@@ -196,6 +197,7 @@ final class RemoteModel {
          permissions: PermissionAccess = .system,
          powerHoldDelay: Duration = .milliseconds(600),
          doubleClickDelay: Duration = .milliseconds(300),
+         gestureNow: @escaping @MainActor () -> ContinuousClock.Instant = { .now },
          foreground: @escaping @MainActor () -> ForegroundContext? = ForegroundContext.current,
          isChatGPTEnabled: Bool = AgentRunner.isChatGPTEnabled,
          finderSupportsNavigation: @escaping @MainActor (ForegroundContext) -> Bool = { _ in true },
@@ -224,6 +226,7 @@ final class RemoteModel {
         self.activeBundleID = foreground()?.bundleID
         self.powerHoldDelay = powerHoldDelay
         self.doubleClickDelay = doubleClickDelay
+        self.gestureNow = gestureNow
         var didUpgrade = false
         do {
             let original = try Data(contentsOf: storeURL)
@@ -1452,7 +1455,7 @@ final class RemoteModel {
 
     private func startGesture(_ key: RemoteKey, input: InputCode, origin: RemoteInputOrigin?, context: ForegroundContext?) {
         guard gestures[key.id] == nil else { return }
-        let now = ContinuousClock.now
+        let now = gestureNow()
         let pending = pendingTaps.removeValue(forKey: key.id)
         pending?.task.cancel()
         let secondTap = pending.map { now < $0.deadline && sameFocus($0.context) } ?? false
@@ -1465,12 +1468,14 @@ final class RemoteModel {
             press.holdTask = Task { [weak self, powerHoldDelay] in
                 do { try await Task.sleep(until: now.advanced(by: powerHoldDelay), clock: .continuous) }
                 catch { return }
+                guard !Task.isCancelled else { return }
                 self?.fireHold(key)
                 if case let .finder(command) = action, command.repeatsWhileHeld {
                     while !Task.isCancelled {
                         do { try await Task.sleep(for: .milliseconds(130)) }
                         catch { return }
-                        guard let self, self.gestures[key.id]?.firedHold == true, self.sameFocus(context) else { return }
+                        guard !Task.isCancelled, let self, self.gestures[key.id]?.firedHold == true,
+                              self.sameFocus(context) else { return }
                         self.runGesture(key.holdSlot, for: key, input: input, origin: origin, context: context)
                     }
                 }
@@ -1491,7 +1496,7 @@ final class RemoteModel {
               let press = gestures.removeValue(forKey: id), let key = keys.first(where: { $0.id == id }) else { return }
         press.holdTask?.cancel()
         guard !press.firedHold, sameFocus(press.context) else { return }
-        let now = ContinuousClock.now
+        let now = gestureNow()
         let double = gestureAction(key.doubleSlot, for: key, context: press.context)
         let recognizesHold = gestureAction(key.holdSlot, for: key, context: press.context) != nil || double != nil
         if recognizesHold && press.started.duration(to: now) >= powerHoldDelay {
@@ -1508,7 +1513,7 @@ final class RemoteModel {
             let task = Task { [weak self] in
                 do { try await Task.sleep(until: deadline, clock: .continuous) }
                 catch { return }
-                guard let self, self.pendingTaps.removeValue(forKey: key.id) != nil else { return }
+                guard !Task.isCancelled, let self, self.pendingTaps.removeValue(forKey: key.id) != nil else { return }
                 self.runGesture(key.id, for: key, input: input, origin: origin, context: press.context)
             }
             pendingTaps[key.id] = PendingTap(input: input, origin: origin, deadline: deadline, context: press.context, task: task)

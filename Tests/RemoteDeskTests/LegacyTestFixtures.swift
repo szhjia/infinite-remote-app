@@ -16,7 +16,7 @@ extension RemoteCatalog {
     }
 }
 
-/// Tests that require an installed Xiaomi explicitly seed their isolated catalog.
+/// Tests that exercise the installer use a real installation transaction.
 @MainActor
 func fixtureCatalog(directory: URL) -> RemoteCatalog {
     var catalog = RemoteCatalog(directory: directory)
@@ -27,16 +27,31 @@ func fixtureCatalog(directory: URL) -> RemoteCatalog {
     return catalog
 }
 
+/// Routing tests start with an existing model. RemoteModel still loads and validates the copy.
+@MainActor
+func seedInstalledLegacyModel(in directory: URL) {
+    let files = FileManager.default
+    let model = directory.appending(path: RemoteDefinition.xiaomiID, directoryHint: .isDirectory)
+    guard !files.fileExists(atPath: model.path) else { return }
+    do {
+        try files.createDirectory(at: directory, withIntermediateDirectories: true)
+        try files.copyItem(at: legacyModelFixtureURL, to: model)
+    } catch {
+        preconditionFailure("Cannot seed installed model test fixture: \(error)")
+    }
+}
+
 @MainActor
 func fixtureRemoteModel(hid: any RemoteInputSource, storeURL: URL,
                         dictation: DictationController = DictationController(),
                         permissions: PermissionAccess = .init(postEvents: { true }, accessibility: { true }),
                         powerHoldDelay: Duration = .milliseconds(600),
                         doubleClickDelay: Duration = .milliseconds(300),
+                        gestureNow: @escaping @MainActor () -> ContinuousClock.Instant = { .now },
                         runAction: @escaping @MainActor (AgentAction, AppTarget?) async throws -> Void) -> RemoteModel {
-    _ = fixtureCatalog(directory: storeURL.deletingLastPathComponent().appending(path: "RemoteModels"))
+    seedInstalledLegacyModel(in: storeURL.deletingLastPathComponent().appending(path: "RemoteModels"))
     let model = RemoteModel(hid: hid, storeURL: storeURL, dictation: dictation, permissions: permissions,
-                            powerHoldDelay: powerHoldDelay, doubleClickDelay: doubleClickDelay,
+                            powerHoldDelay: powerHoldDelay, doubleClickDelay: doubleClickDelay, gestureNow: gestureNow,
                             foreground: { .init(bundleID: AppTarget.chatGPT.bundleID, pid: 123) }, runAction: runAction)
     model.selectEditingApp(.chatGPT)
     return model

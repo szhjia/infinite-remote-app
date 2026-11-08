@@ -22,18 +22,32 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.0.2</string>
+	<string>0.0.3</string>
 	<key>CFBundleVersion</key>
-	<string>6</string>
+	<string>8</string>
 	<key>InfiniteRemoteChatGPTEnabled</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Infinite Remote connects to your selected remote to transmit its microphone audio when you hold the voice button.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSInputMonitoringUsageDescription</key>
 	<string>Infinite Remote reads button signals from your selected remote to configure keys and trigger actions.</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Infinite Remote connects to your selected remote to transmit its microphone audio when you hold the voice button.</string>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://szhjia.github.io/infinite-remote-website/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>3DiGOXFY+irXy0mLKIdhP2l+25MvtqSM06k7wZiRc/s=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUSignedFeedFailureExpirationInterval</key>
+	<integer>0</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

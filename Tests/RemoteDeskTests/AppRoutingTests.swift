@@ -18,6 +18,7 @@ private final class RoutingFixture: RemoteInputSource {
     let origin = RemoteInputOrigin(endpoint: 3, cookie: 4)
     var focus = ForegroundContext(bundleID: AppTarget.finder.bundleID, pid: 11)
     var executed: [(AgentAction, String?)] = []
+    private var gestureTime: ContinuousClock.Instant?
     var voice: [(KeyboardShortcut, Bool)] = []
     var systemDictationTargets: [Int32] = []
     var systemDictationFailure: SystemDictation.Failure?
@@ -39,17 +40,28 @@ private final class RoutingFixture: RemoteInputSource {
     }
 
     func tap(_ usage: Int) {
+        let previous = gestureTime
+        gestureTime = previous ?? .now
+        defer { gestureTime = previous }
         send(usage, down: true)
         send(usage, down: false)
+    }
+
+    func doubleTap(_ usage: Int) {
+        gestureTime = .now
+        defer { gestureTime = nil }
+        tap(usage)
+        tap(usage)
     }
 
     func model(in folder: URL, finderViewSupported: Bool = true, isChatGPTEnabled: Bool = true,
                powerHoldDelay: Duration = .milliseconds(45), doubleClickDelay: Duration = .milliseconds(60),
                codexAccess: CodexConversationControl.Access = .system) -> RemoteModel {
-        _ = fixtureCatalog(directory: folder.appending(path: "RemoteModels"))
+        seedInstalledLegacyModel(in: folder.appending(path: "RemoteModels"))
         let model = RemoteModel(hid: self, storeURL: folder.appending(path: "configuration.json"),
                                 permissions: .init(postEvents: { true }, accessibility: { self.accessibilityAllowed }),
                                 powerHoldDelay: powerHoldDelay, doubleClickDelay: doubleClickDelay,
+                                gestureNow: { self.gestureTime ?? .now },
                                 foreground: { self.focus },
                                 isChatGPTEnabled: isChatGPTEnabled,
                                 finderSupportsNavigation: { _ in finderViewSupported },
@@ -218,7 +230,10 @@ func foregroundRoutingIsIndependentFromEditingAndIgnoresUnverifiedNativeGestures
     let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
     let fixture = RoutingFixture()
-    let model = fixture.model(in: folder)
+    // This scenario exercises routing across real model lookups and saves. Use the
+    // production gesture window so machine speed does not turn a tap into a hold.
+    let doubleClickDelay: Duration = .milliseconds(300)
+    let model = fixture.model(in: folder, powerHoldDelay: .milliseconds(600), doubleClickDelay: doubleClickDelay)
     let other = AppTarget(bundleID: "example.editor")
     let shortcut = KeyboardShortcut(keyCode: 15, modifiers: [.command], keyName: "R")
     #expect(model.apps.prefix(2).map(\.bundleID) == [AppTarget.finder.bundleID, AppTarget.chatGPT.bundleID])
@@ -226,17 +241,15 @@ func foregroundRoutingIsIndependentFromEditingAndIgnoresUnverifiedNativeGestures
     model.setAction(.shortcut(shortcut), for: "ok")
     #expect(model.saveConfigurationChanges(as: "Editor"))
 
-    fixture.tap(0x28)
-    fixture.tap(0x28)
+    fixture.doubleTap(0x28)
     await waitForRouting { fixture.executed.count == 1 }
     #expect(fixture.executed.map(\.0) == [.finder(.contextMenu)])
     #expect(fixture.executed.first?.1 == AppTarget.finder.bundleID)
 
     fixture.captured = false
-    fixture.tap(0x28)
-    fixture.tap(0x28)
+    fixture.doubleTap(0x28)
     #expect(model.feedback == L10n.tr("当前设备无法可靠改绑，已保留原生按键。"))
-    try await Task.sleep(for: .milliseconds(80))
+    try await Task.sleep(for: doubleClickDelay + .milliseconds(50))
     #expect(fixture.executed.count == 1)
 
     fixture.captured = true
@@ -245,7 +258,7 @@ func foregroundRoutingIsIndependentFromEditingAndIgnoresUnverifiedNativeGestures
     model.foregroundChanged()
     fixture.tap(0x28)
     await waitForRouting { fixture.executed.count == 2 }
-    try await Task.sleep(for: .milliseconds(80))
+    try await Task.sleep(for: doubleClickDelay + .milliseconds(50))
     #expect(fixture.executed.map(\.0) == [.finder(.contextMenu), .shortcut(shortcut)])
     #expect(fixture.executed.last?.1 == other.bundleID)
 
@@ -477,7 +490,8 @@ func finderHoldRepeatsWithoutEmittingTapAndStopsOnRelease() async throws {
     let fixture = RoutingFixture()
     let model = fixture.model(in: folder)
     fixture.send(0x52, down: true)
-    await waitForRouting { fixture.executed.count >= 2 }
+    await waitForRouting(timeout: .seconds(10)) { fixture.executed.count >= 2 && !model.isRunning }
+    try #require(fixture.executed.count >= 2 && !model.isRunning)
     fixture.send(0x52, down: false)
     let before = fixture.executed.count
     try await Task.sleep(for: .milliseconds(180))

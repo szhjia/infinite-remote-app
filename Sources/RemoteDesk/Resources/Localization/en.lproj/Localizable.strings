@@ -392,6 +392,7 @@
 "管理订阅源…" = "Manage Sources…";
 "未能载入资源目录" = "Could not load the catalog";
 "设置…" = "Settings…";
+"检查更新…" = "Check for Updates…";
 "预览使用当前选择，保存后才会应用。" = "Preview shows the current selection. Save to apply changes.";
 "最多可选 %@ 个应用" = "Choose up to %@ apps";
 "预览" = "Preview";

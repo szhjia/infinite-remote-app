@@ -431,8 +431,9 @@ func powerDispatchesExactlyOneActionAndDropsInterruptedPresses() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     defer { try? FileManager.default.removeItem(at: directory) }
     var dispatched: [AgentAction] = []
+    var gestureTime: ContinuousClock.Instant?
     let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json"),
-                            powerHoldDelay: .milliseconds(50)) { action, _ in dispatched.append(action) }
+                            powerHoldDelay: .milliseconds(50), gestureNow: { gestureTime ?? .now }) { action, _ in dispatched.append(action) }
     model.refreshPermissions()
     model.selectSlot("power")
     model.startLearning()
@@ -440,11 +441,13 @@ func powerDispatchesExactlyOneActionAndDropsInterruptedPresses() async throws {
     input.onEvent(device, .released(code, origin: origin))
     #expect(model.saveConfigurationChanges())
 
+    gestureTime = .now
     input.onEvent(device, .pressed(code, origin: origin))
     #expect(dispatched.isEmpty)
     input.onEvent(device, .released(code, origin: origin))
+    gestureTime = nil
     try await waitForAction(on: model)
-    #expect(dispatched == [.toggleDisplays])
+    try #require(dispatched == [.toggleDisplays])
 
     input.onEvent(device, .pressed(code, origin: origin))
     input.onEvent(device, .pressed(code, origin: origin))
@@ -899,13 +902,14 @@ func systemShortcutRequiresTheSameEnabledCombination() throws {
 }
 
 @MainActor
-private func waitUntil(_ condition: () -> Bool) async throws {
+private func waitUntil(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
     let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: .seconds(2))
+    // The timeout detects a stalled transition; the behavior under test is the state, not main-actor scheduling latency.
+    let deadline = clock.now.advanced(by: .seconds(10))
     while !condition() && clock.now < deadline {
         try await clock.sleep(for: .milliseconds(5))
     }
-    try #require(condition())
+    try #require(condition(), sourceLocation: sourceLocation)
 }
 
 @Test @MainActor
@@ -1099,8 +1103,10 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
     let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
     var actions: [AgentAction] = []
+    var gestureTime: ContinuousClock.Instant?
+    let doubleClickDelay: Duration = .milliseconds(300)
     let model = fixtureRemoteModel(hid: input, storeURL: folder.appending(path: "configuration.json"),
-                            powerHoldDelay: .milliseconds(80), doubleClickDelay: .milliseconds(50)) { action, _ in
+                                   doubleClickDelay: doubleClickDelay, gestureNow: { gestureTime ?? .now }) { action, _ in
         actions.append(action)
     }
     model.refreshPermissions()
@@ -1129,29 +1135,38 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
         #expect(model.lastKeyRelease != previousRelease)
     }
     func tap() { press(); release() }
+    func gestureSequence(_ events: () -> Void) {
+        // Keep synthetic HID edges together even if the test runner is descheduled.
+        gestureTime = .now
+        defer { gestureTime = nil }
+        events()
+    }
 
-    tap()
-    #expect(!model.isRunning)
-    tap()
+    gestureSequence {
+        tap()
+        #expect(!model.isRunning)
+        tap()
+    }
     try await waitUntil { actions.count == 1 && !model.isRunning }
     #expect(actions == [.lockScreen])
 
-    tap()
+    gestureSequence { tap() }
     try await waitUntil { actions.count == 2 && !model.isRunning }
     #expect(actions == [.lockScreen, .showDesktop])
 
-    tap()
-    press()
+    gestureSequence { tap(); press() }
     try await waitUntil { actions.count == 3 && !model.isRunning }
     release()
     #expect(actions == [.lockScreen, .showDesktop, .toggleDisplays])
 
-    tap()
-    model.setDiagnosing(true)
-    model.setDiagnosing(false)
-    tap()
-    input.onEvent(device, .endpointClosed(origin.endpoint))
-    try await Task.sleep(for: .milliseconds(100))
+    gestureSequence {
+        tap()
+        model.setDiagnosing(true)
+        model.setDiagnosing(false)
+        tap()
+        input.onEvent(device, .endpointClosed(origin.endpoint))
+    }
+    try await Task.sleep(for: doubleClickDelay + .milliseconds(50))
     #expect(actions.count == 3)
 
     let previousRelease = model.lastKeyRelease
@@ -1162,10 +1177,12 @@ func gestureDispatchSeparatesTapsAndHoldsAndCancelsPendingWork() async throws {
 
     // Completing a double-click must not replace the feedback of a newer held key.
     let right = InputCode(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x4F, report: 1, value: 1)
-    tap()
-    press()
-    input.press(device, right)
-    input.onEvent(device, .released(code, origin: origin))
+    gestureSequence {
+        tap()
+        press()
+        input.press(device, right)
+        input.onEvent(device, .released(code, origin: origin))
+    }
     #expect(model.hardwarePress?.key == "right")
     #expect(model.pressedHardwareKey == "right")
     input.onEvent(device, .released(right))

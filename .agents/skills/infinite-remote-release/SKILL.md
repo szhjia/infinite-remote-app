@@ -16,8 +16,8 @@ description: 为 Infinite Remote macOS App 重新打包、签名、提交 Apple 
 ## 打包与签名
 
 1. 运行 `swift test`，确认交付源码通过。若外层沙箱只阻止 SwiftPM 启动自己的构建沙箱，可用 `swift test --disable-sandbox` 重新验证。测试失败时不要把产物标为可发布。
-2. 用 `scripts/build-app.sh` 构建 App。现有 `scripts/package-release.sh` 只生成 ZIP 和 SHA-256；脚本成功不代表产物已公证，也不保证所选签名身份适合公开分发。重新生成同名产物前核对已有文件，优先在单独的暂存目录构建。
-3. 使用本机可用的 **Developer ID Application** 签名身份，核对证书团队和 Bundle ID。开发用签名或 `dist/.signing-identity` 不能直接作为发布证据。用 Hardened Runtime 和安全时间戳签名 App，再创建带 `/Applications` 链接的只读 DMG 并签名。核对包内的版本、构建号、架构和改动；用 `codesign --verify --strict --deep <App>`、`codesign --verify --verbose <DMG>` 和 `hdiutil verify <DMG>` 分别检查签名和镜像。已有已安装 App 或旧 `dist` 产物不能代替本次验收。
+2. 用 `scripts/build-app.sh` 构建 App。制作 DMG 时运行 `scripts/package-dmg.sh [App 路径 [DMG 输出路径]]`，默认读取 `dist/Infinite Remote.app`，按版本、构建号和架构命名。脚本以 `scripts/dmg-assets/installer-template.dmg` 保留 0.0.2 build 3 的原始窗口布局，原位写入 `installation-arrow.gif` 以保留 Finder 对背景的引用。交付前只读挂载并在 Finder 打开，确认淡紫背景上的箭头循环向右移动，左侧为 App，右侧为指向 `/Applications` 的快捷方式。ZIP 及其 SHA-256 由 `scripts/package-release.sh` 生成。
+3. 对公开发行使用本机可用的 **Developer ID Application** 签名身份，核对证书团队和 Bundle ID。开发用签名或 `dist/.signing-identity` 不能直接作为发布证据。用 Hardened Runtime 和安全时间戳签名 App，再用该签名身份打包 DMG。核对包内的版本、构建号、架构和改动；用 `codesign --verify --strict --deep <App>`、`codesign --verify --verbose <DMG>` 和 `hdiutil verify <DMG>` 分别检查签名和镜像。已有已安装 App 或旧 `dist` 产物不能代替本次验收。
 
 ## Apple 公证与首次打开
 
@@ -28,6 +28,8 @@ description: 为 Infinite Remote macOS App 重新打包、签名、提交 Apple 
 ## GitHub 与官网
 
 - 在已授权发布时，把已核对的源码标签、最终 DMG/ZIP 和各自 SHA-256 上传至 `szhjia/infinite-remote-app` 的目标 Release。重新从 GitHub 下载，比较实际下载文件与本地产物的 SHA-256；验证 Release、标签提交和附件名。
+- Sparkle 更新使用同一个已公证、已装订的 DMG。从与 `Package.swift` 中锁定版本一致的 [Sparkle 官方发行包](https://github.com/sparkle-project/Sparkle/releases)取出工具，执行 `SPARKLE_BIN_DIR=/absolute/path/to/bin ./scripts/generate-appcast.sh <final.dmg> RELEASE_NOTES.md`。脚本用登录钥匙串中的 `infinite-remote` 账户签名，并将签名后的清单写入 `dist/appcast.xml`。保留更新签名私钥的加密离线备份，签名后保持 DMG 和 XML 的原始字节。
+- 待 Release 附件已公开且下载校验通过，把生成的 XML 原样复制到独立官网仓库的 `public/appcast.xml`。官网发布后核对线上清单和本地字节一致，再用低一个构建号的、已接入 Sparkle 的安装副本走一次检查、下载、安装、重启。核对新构建号、按键映射、辅助功能及输入监控授权。首个内置 Sparkle 的版本由旧版用户手动覆盖安装。
 - 如需删除 Releases，先列出确切目标和附件；按授权删除指定 Release，并查询 GitHub API 验证剩余已发布条目。是否保留备份以用户指示为准，不把删除 Release 当成删除标签。
 - 官网 `website/src/lib/release.ts` 单独维护版本、构建号与资产 URL。先保证新附件公开可下载，再按授权更新部署；从公开官网走一遍下载链接。若旧链接已失效且官网未更新，单独报告。
 - 每次交付总结注明源码 SHA（以及是否包含未提交改动）、版本/构建号/架构、最终文件和 SHA-256、公证提交 ID 与结果、首次打开与公开下载的实测结果。遇到可复用的新差异，把有效修正补进本技能，不记录凭证、临时路径或一时的发布状态。

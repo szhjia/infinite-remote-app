@@ -50,6 +50,13 @@ struct RemoteDeskApp: App {
                             showSetup: windows.startSetupFromSettings, previewMedia: windows.showMediaPreview)
                 .frame(width: 600, height: 410)
         }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                if let appUpdater = windows.appUpdater {
+                    CheckForUpdatesButton(appUpdater: appUpdater)
+                }
+            }
+        }
     }
 
     private var trayStatus: (asset: String, description: String) {
@@ -94,6 +101,9 @@ private struct TrayMenu: View {
                 Image("BridgeDiagnostics", bundle: .module)
             }
         }
+        if let appUpdater = windows.appUpdater {
+            CheckForUpdatesButton(appUpdater: appUpdater)
+        }
         SettingsLink { Text(L10n.tr("设置…")) }
         Divider()
         Button(L10n.tr("退出无限遥控器")) { NSApp.terminate(nil) }
@@ -104,6 +114,7 @@ private struct TrayMenu: View {
 final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = RemoteModel()
     let mediaSettings = MediaSettings()
+    private(set) var appUpdater: AppUpdater?
     private let mediaLauncher = MediaLauncher()
     @ObservationIgnored lazy var resourceLibrary = ResourceLibrary(directory: model.libraryDirectory)
     var settingsPane = AppSettingsPane.permissions
@@ -178,6 +189,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         needsInitialSetup = SetupStartup.requiresGuide(in: defaults, hasModel: model.hasRemote)
         if needsInitialSetup { SetupStartup.begin(in: defaults) }
         showWorkspace()
+        appUpdater = AppUpdater()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
