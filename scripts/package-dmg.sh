@@ -2,12 +2,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if (( $# > 2 )); then
-    printf 'Usage: %s [app-path [output.dmg]]\n' "$0" >&2
+if (( $# < 1 || $# > 2 )); then
+    printf 'Usage: %s app-path [output.dmg]\nFor a public release, use scripts/package-public-dmg.sh.\n' "$0" >&2
     exit 2
 fi
 
-app="${1:-dist/Infinite Remote.app}"
+app="$1"
 plist="$app/Contents/Info.plist"
 version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$plist")
 build=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$plist")

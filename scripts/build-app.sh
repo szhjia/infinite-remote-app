@@ -6,8 +6,13 @@ if [[ -z "$signing_identity" && -f dist/.signing-identity ]]; then
     signing_identity=$(<dist/.signing-identity)
 fi
 signing_identity="${signing_identity:--}"
-swift build -c release -Xlinker -rpath -Xlinker '@loader_path/../Frameworks'
-build_dir="$(swift build -c release --show-bin-path)"
+set --
+if [[ -n "${REMOTEDESK_SOURCE_COMMIT:-}" ]]; then
+    [[ "$REMOTEDESK_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { printf 'Invalid source commit.\n' >&2; exit 1; }
+    set -- --force-resolved-versions
+fi
+swift build "$@" -c release -Xlinker -rpath -Xlinker '@loader_path/../Frameworks'
+build_dir="$(swift build "$@" -c release --show-bin-path)"
 bin="$build_dir/RemoteDesk"
 app="dist/Infinite Remote.app"
 mkdir -p dist
@@ -21,6 +26,9 @@ rm -rf "$staged_app/Contents/Resources/Infinite Remote_RemoteDesk.bundle/RemoteM
 install -m 755 "$bin" "$staged_app/Contents/MacOS/RemoteDesk"
 install -m 644 scripts/RemoteDesk.icns "$staged_app/Contents/Resources/RemoteDesk.icns"
 install -m 644 scripts/Info.plist "$staged_app/Contents/Info.plist"
+if [[ -n "${REMOTEDESK_SOURCE_COMMIT:-}" ]]; then
+    /usr/bin/plutil -insert InfiniteRemoteSourceCommit -string "$REMOTEDESK_SOURCE_COMMIT" "$staged_app/Contents/Info.plist"
+fi
 install -m 644 LICENSE "$staged_app/Contents/Resources/LICENSE.txt"
 install -m 644 scripts/LICENSE-Sparkle.txt "$staged_app/Contents/Resources/LICENSE-Sparkle.txt"
 sparkle="$staged_app/Contents/Frameworks/Sparkle.framework"
