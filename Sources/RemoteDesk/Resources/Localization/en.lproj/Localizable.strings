@@ -217,7 +217,6 @@
 "机身尺寸、按键或说明锚点无效。" = "The remote dimensions, keys, or annotation anchors are invalid.";
 "权限与引导" = "Permissions and Setup";
 "松开 · %@%@" = "Released · %@%@";
-"查看" = "View";
 "查看硬件说明" = "View Hardware Details";
 "正在刷新订阅源…" = "Refreshing subscription sources…";
 "正在启动 Codex 听写…" = "Starting Codex dictation…";
@@ -442,7 +441,7 @@
 "继续设置遥控器" = "Resume Remote Setup";
 "配置第一个按键" = "Configure the First Button";
 "正在等待遥控器连接。若未连上，可返回上一步检查蓝牙。" = "Waiting for the remote. If it doesn’t connect, go back to check Bluetooth.";
-"macOS 可能要求重新打开应用。重新打开后会回到这一步。" = "macOS may ask you to reopen the app. Setup will resume here.";
+"macOS 可能要求重新打开应用。" = "macOS may ask you to reopen the app.";
 "已授权，但暂时无法读取按键。" = "Access is granted, but button presses cannot be read yet.";
 "授权…" = "Allow…";
 "授予%@权限" = "Allow %@";

@@ -167,15 +167,10 @@ struct SetupGuide: View {
 
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(spacing: 0) {
-                permissionRow(.accessibility)
-                Divider().padding(.leading, 52)
-                permissionRow(.inputMonitoring)
+            PermissionChecklist(model: model) {
+                saveStage(.permissions)
             }
-            .background(.background, in: RoundedRectangle(cornerRadius: 12))
-            if model.shortcutsNeedRestart {
-                Label(L10n.tr("请退出并重新打开无限遥控器，以启用快捷键。"), systemImage: "arrow.clockwise")
-                    .foregroundStyle(.secondary)
+            if model.shortcutsNeedRestart || readiness.needsSeparateInputAuthorization {
                 Text(L10n.tr("重新打开后会回到这一步。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -191,44 +186,6 @@ struct SetupGuide: View {
             }
             Spacer(minLength: 0)
         }
-    }
-
-    private func permissionRow(_ kind: PermissionKind) -> some View {
-        let status = kind.status(in: model)
-        let canRequest = kind == .accessibility || readiness.needsSeparateInputAuthorization
-        return HStack(spacing: 12) {
-            Image(systemName: kind.symbol)
-                .font(.title3)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 24)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(kind.title).font(.headline)
-                Text(kind.explanation).font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if kind == .inputMonitoring && canRequest {
-                    Text(L10n.tr("macOS 可能要求重新打开应用。重新打开后会回到这一步。"))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 10)
-            if status.isAvailable {
-                Label(status.title, systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            } else if canRequest {
-                Button(L10n.tr("授权…")) {
-                    saveStage(.permissions)
-                    kind.request(in: model)
-                }
-                    .accessibilityLabel(L10n.format("授予%@权限", kind.title))
-                    .accessibilityHint(L10n.tr("尚未授权"))
-            } else {
-                Text(L10n.tr("先开启辅助功能"))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(16)
     }
 
     private var ready: some View {

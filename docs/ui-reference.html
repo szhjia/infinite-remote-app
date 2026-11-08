@@ -95,6 +95,7 @@
     <a href="#library">资源库</a>
     <a href="#settings">应用设置</a>
     <a href="#guide">使用引导</a>
+    <a href="#guide-permissions">引导授权</a>
   </nav>
   <label class="toggle"><input type="checkbox" id="show-marks" checked> 显示截图标注</label>
   <p class="scroll-note">窄屏可横向滚动截图。</p>
@@ -150,16 +151,17 @@
   </section>
   <section id="settings">
     <div class="heading"><h2>应用设置</h2><a href="images/app-settings.jpg">原始截图</a></div>
-    <p>图中是「权限与引导」。顶部也可切换到「订阅源」和「多媒体」。</p>
+    <p>「权限与引导」与引导第 4 步共用 <code>PermissionChecklist</code>。浅色模式，尚未授权。原图为 1200 × 876 px。</p>
     <div class="panel">
       <div class="shot-scroll"><div class="shot">
-        <img src="images/app-settings.jpg" width="1200" height="876" alt="应用设置的权限与引导页">
+        <img src="images/app-settings.jpg" width="1200" height="876" alt="应用设置的权限与引导页。辅助功能行显示授权按钮，输入监控行提示先开启辅助功能。">
       </div></div>
       <ol class="marks" aria-label="应用设置视图与属性">
-        <li class="pink" data-box=".5 6.8 99 92.4" data-at="99.5 10" data-pin="96 10"><code>AppSettingsView</code><small>设置窗口的 SwiftUI 内容</small></li>
-        <li class="pink" data-kind="member" data-box="30.5 9.4 39 5.4" data-at="69.5 12" data-pin="75 12"><code>Picker · $pane</code><small>选项卡绑定</small></li>
-        <li class="pink" data-kind="member" data-box="2.7 21.7 94.6 35.9" data-at="97.3 53" data-pin="92 53"><code>permissionsPane</code><small>权限状态与重开引导入口</small></li>
-        <li class="pink" data-at="25.7 51.2" data-pin="34 51.2"><code>showSetup()</code><small>重开引导按钮调用的回调</small></li>
+        <li class="pink" data-box=".5 6.5 99 92.9" data-at="99.5 10" data-pin="96 10"><code>AppSettingsView</code><small>设置窗口的 SwiftUI 内容</small></li>
+        <li class="pink" data-kind="member" data-box="30.7 9.7 38.7 4.9" data-at="69.4 12.2" data-pin="75 12.2"><code>Picker · $pane</code><small>切换权限与引导、订阅源和多媒体。</small></li>
+        <li class="pink" data-kind="member" data-box="2.4 21.7 95.2 48.6" data-at="97.6 25.5" data-pin="92.5 25.5"><code>permissionsPane</code><small>包含与引导相同的授权标题，以及清单下方的重新检查和重开引导按钮。</small></li>
+        <li class="mint" data-box="3 30.5 94 30.8" data-at="72 61.3" data-pin="72 55.4"><code>PermissionChecklist</code><small>设置和引导共用。包含辅助功能与输入监控两行的用途说明、状态和授权入口。</small></li>
+        <li class="pink" data-kind="member" data-at="77 67.2" data-pin="71.5 67.2"><code>showSetup()</code><small>重开引导按钮调用的回调</small></li>
       </ol>
     </div>
   </section>
@@ -180,6 +182,23 @@
         <li class="cyan" data-at="65.8 85.5" data-pin="71 85.5"><code>arrow(_:title:destination:)</code><small>生成轮播的前后按钮</small></li>
         <li class="blue" data-kind="member" data-box="1 90.8 98 8.3" data-at="49 90.8" data-pin="49 95"><code>footer</code><small>与 SetupBanner 并列的操作区</small></li>
         <li class="blue" data-at="86 95.5" data-pin="80 95.5"><code>primaryTitle</code><small>主按钮文字</small></li>
+      </ol>
+    </div>
+  </section>
+  <section id="guide-permissions">
+    <div class="heading"><h2>使用引导 · 授权</h2><a href="images/setup-guide-permissions.jpg">原始截图</a></div>
+    <p>引导第 4 步与应用设置共用 <code>PermissionChecklist</code>。浅色模式，尚未授权。原图为 1380 × 1116 px。</p>
+    <div class="panel">
+      <div class="shot-scroll"><div class="shot">
+        <img src="images/setup-guide-permissions.jpg" width="1380" height="1116" alt="使用引导的第 4 步。辅助功能行显示授权按钮，输入监控行提示先开启辅助功能。">
+      </div></div>
+      <ol class="marks" aria-label="引导授权步骤的视图与属性">
+        <li class="blue" data-box=".5 5.1 99 94.3" data-at="99.5 7" data-pin="96 7"><code>SetupGuide</code><small>引导窗口的 SwiftUI 内容</small></li>
+        <li class="blue" data-kind="member" data-at="35.6 10.8" data-pin="41 10.8"><code>stage.title</code><small>当前步骤标题。设置页也使用同一个标题。</small></li>
+        <li class="blue" data-kind="member" data-at="92 11" data-pin="87 11"><code>stage.position</code><small>用于计算当前步骤进度</small></li>
+        <li class="blue" data-kind="member" data-box="3.5 14.8 93 74.4" data-at="96.5 56" data-pin="92 56"><code>permissions</code><small>引导的授权步骤内容，负责重新检查和设备提示。</small></li>
+        <li class="mint" data-box="4.1 15.5 91.8 24.2" data-at="72 39.7" data-pin="72 45.2"><code>PermissionChecklist</code><small>与应用设置共用这两行。引导发起授权前会保存当前步骤。</small></li>
+        <li class="blue" data-kind="member" data-box="1 90.6 98 8.8" data-at="49 90.6" data-pin="49 95.2"><code>footer</code><small>引导的底部导航。权限和设备尚未就绪时，「继续」不可用。</small></li>
       </ol>
     </div>
   </section>

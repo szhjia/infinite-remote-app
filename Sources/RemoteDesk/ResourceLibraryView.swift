@@ -404,7 +404,6 @@ struct AppSettingsView: View {
     let showSetup: () -> Void
     let previewMedia: ShowMediaPreview
     @Environment(\.dismiss) private var dismiss
-    @State private var permission: PermissionKind?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -432,28 +431,22 @@ struct AppSettingsView: View {
                 }
             }
         }
-        .sheet(item: $permission) { kind in
-            PermissionStepView(kind: kind, model: model) { permission = nil }.frame(width: 430)
-        }
     }
 
     private var permissionsPane: some View {
-        GroupBox(L10n.tr("权限与引导")) {
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach([PermissionKind.inputMonitoring, .accessibility]) { kind in
-                    HStack {
-                        Label(kind.title, systemImage: kind.symbol)
-                        Spacer()
-                        Text(kind.status(in: model).title).foregroundStyle(.secondary)
-                        Button(L10n.tr("查看")) { permission = kind }
-                    }
-                }
-                Divider()
+        VStack(alignment: .leading, spacing: 16) {
+            Text(SetupStage.permissions.title)
+                .font(.title2.bold())
+                .accessibilityAddTraits(.isHeader)
+            PermissionChecklist(model: model)
+            HStack {
+                Button(L10n.tr("重新检查"), action: model.refreshPermissions)
+                Spacer()
                 Button(L10n.tr("重新打开使用引导")) {
                     dismiss()
                     showSetup()
                 }
-            }.padding(12)
+            }
         }
     }
 }
