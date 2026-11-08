@@ -45,19 +45,12 @@ struct PermissionChecklist: View {
     var beforeRequest: () -> Void = {}
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(spacing: 0) {
-                permissionRow(.accessibility)
-                Divider().padding(.leading, 52)
-                permissionRow(.inputMonitoring)
-            }
-            .background(.background, in: RoundedRectangle(cornerRadius: 12))
-
-            if model.shortcutsNeedRestart {
-                Label(L10n.tr("请退出并重新打开无限遥控器，以启用快捷键。"), systemImage: "arrow.clockwise")
-                    .foregroundStyle(.secondary)
-            }
+        VStack(spacing: 0) {
+            permissionRow(.accessibility)
+            Divider().padding(.leading, 52)
+            permissionRow(.inputMonitoring)
         }
+        .background(.background, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func permissionRow(_ kind: PermissionKind) -> some View {

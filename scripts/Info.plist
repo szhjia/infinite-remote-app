@@ -24,7 +24,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.0.3</string>
 	<key>CFBundleVersion</key>
-	<string>8</string>
+	<string>9</string>
 	<key>InfiniteRemoteChatGPTEnabled</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>

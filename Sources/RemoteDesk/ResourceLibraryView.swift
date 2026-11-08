@@ -439,6 +439,10 @@ struct AppSettingsView: View {
                 .font(.title2.bold())
                 .accessibilityAddTraits(.isHeader)
             PermissionChecklist(model: model)
+            if model.shortcutsNeedRestart {
+                Label(L10n.tr("请退出并重新打开无限遥控器，以启用快捷键。"), systemImage: "arrow.clockwise")
+                    .foregroundStyle(.secondary)
+            }
             HStack {
                 Button(L10n.tr("重新检查"), action: model.refreshPermissions)
                 Spacer()

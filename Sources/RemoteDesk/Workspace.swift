@@ -18,7 +18,6 @@ struct Workspace: View {
     let model: RemoteModel
     let library: ResourceLibrary
     let layout: WorkspaceLayout
-    let showDiagnostics: () -> Void
     let showSettings: (AppSettingsPane?) -> Void
     @Binding var page: Page
     @Binding private var firstKeyToConfigure: String?
@@ -30,7 +29,7 @@ struct Workspace: View {
     }
 
     init(model: RemoteModel, library: ResourceLibrary, page: Binding<Page>,
-         showDiagnostics: @escaping () -> Void, showSettings: @escaping (AppSettingsPane?) -> Void,
+         showSettings: @escaping (AppSettingsPane?) -> Void,
          layout: WorkspaceLayout = .defaults,
          firstKeyToConfigure: Binding<String?> = .constant(nil)) {
         self.model = model
@@ -38,7 +37,6 @@ struct Workspace: View {
         self.layout = layout
         _page = page
         _firstKeyToConfigure = firstKeyToConfigure
-        self.showDiagnostics = showDiagnostics
         self.showSettings = showSettings
     }
     @State private var sheet: SettingsSheet?
@@ -82,7 +80,7 @@ struct Workspace: View {
                 } else if model.hasRemote {
                     DeviceWorkspace(model: model, layout: layout, guideSelection: $guideSelection, shortcutPicker: $shortcutPicker,
                                     firstKeyToConfigure: $firstKeyToConfigure,
-                                    showDiagnostics: showDiagnostics, showPermissions: { showSettings(.permissions) },
+                                    showPermissions: { showSettings(.permissions) },
                                     onSelectApp: editApp, onAddApp: chooseApp, onEditorCommand: handleEditorCommand)
                 } else {
                     emptyWorkspace
@@ -340,34 +338,6 @@ struct Workspace: View {
         } catch {
             model.reportError(L10n.tr("无法导入该文件。请选择无限遥控器导出的配置。"))
         }
-    }
-}
-
-struct ConfigurationResponseSwitch: View {
-    @Bindable var model: RemoteModel
-
-    var body: some View {
-        if #available(macOS 26.0, *) {
-            control
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .glassEffect(.regular, in: .capsule)
-        } else {
-            control.padding(.horizontal, 4)
-        }
-    }
-
-    private var control: some View {
-        HStack(spacing: 7) {
-            Text(L10n.tr("响应遥控器")).font(.callout).accessibilityHidden(true)
-            Toggle(L10n.tr("响应遥控器"), isOn: $model.isEnabled)
-                .toggleStyle(.switch)
-                .labelsHidden()
-                .controlSize(.small)
-                .accessibilityLabel(L10n.tr("响应遥控器"))
-        }
-        .fixedSize()
-        .help(L10n.tr("暂停时仍可查看按键信号"))
     }
 }
 

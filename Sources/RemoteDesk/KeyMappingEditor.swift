@@ -25,7 +25,6 @@ struct KeyMappingEditor: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var mappingFocus: String?
-    @State private var showConfigActions = false
     @State private var showsCalibrationConflict = false
 
     private let accent = Color.accentColor
@@ -435,8 +434,10 @@ struct KeyMappingEditor: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
-                Button(L10n.tr("配置操作…")) { showConfigActions.toggle() }
-                    .popover(isPresented: $showConfigActions, arrowEdge: .top) { configurationActions }
+                Menu(L10n.tr("配置操作")) { configurationActions }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.visible)
+                    .fixedSize(horizontal: true, vertical: false)
                 Button(L10n.tr(model.needsProfileName ? "另存为自定义配置…" : "保存更改"), action: { onCommand(.saveProfile) })
                     .buttonStyle(.borderedProminent)
                     .disabled(!model.hasConfigurationChanges || model.learning != nil || model.calibrationConflict != nil)
@@ -447,49 +448,25 @@ struct KeyMappingEditor: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    @ViewBuilder
     private var configurationActions: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            WorkspacePopoverAction(L10n.tr("恢复默认")) {
-                showConfigActions = false
-                model.restoreDefaultActions()
-            }
+        Button(L10n.tr("恢复默认")) { model.restoreDefaultActions() }
             .disabled(model.editingCodexPreset)
-            WorkspacePopoverAction(L10n.tr("导出配置…")) {
-                showConfigActions = false
-                onCommand(.exportProfile)
-            }
+        Button(L10n.tr("导出配置…")) { onCommand(.exportProfile) }
             .disabled(model.editingCodexPreset)
-            WorkspacePopoverAction(L10n.tr("导入配置…")) {
-                showConfigActions = false
-                onCommand(.importProfile)
-            }
-            if !model.unassignedProfiles.isEmpty {
-                Menu(L10n.tr("将旧配置分配给此应用")) {
-                    ForEach(model.unassignedProfiles) { profile in
-                        Button(profile.name) {
-                            if model.assignProfile(profile.id) { showConfigActions = false }
-                        }
-                    }
-                }
-                .padding(.horizontal, 7)
-                .disabled(model.hasConfigurationChanges)
-            }
-            Divider()
-            WorkspacePopoverAction(model.learning == nil ? L10n.tr("手动校准当前键…") : L10n.tr("取消校准")) {
-                showConfigActions = false
-                if model.learning == nil { model.startLearning() }
-                else { model.cancelLearning() }
-            }
-            .disabled(!model.canReadKeys || !model.isEnabled || model.isDiagnosing)
-            if model.hasConfigurationChanges {
-                WorkspacePopoverAction(L10n.tr("撤销未保存的更改")) {
-                    showConfigActions = false
-                    model.discardConfigurationChanges()
+        Button(L10n.tr("导入配置…")) { onCommand(.importProfile) }
+        if !model.unassignedProfiles.isEmpty {
+            Menu(L10n.tr("将旧配置分配给此应用")) {
+                ForEach(model.unassignedProfiles) { profile in
+                    Button(profile.name) { model.assignProfile(profile.id) }
                 }
             }
+            .disabled(model.hasConfigurationChanges)
         }
-        .fixedSize(horizontal: true, vertical: false)
-        .padding(5)
+        if model.hasConfigurationChanges {
+            Divider()
+            Button(L10n.tr("撤销未保存的更改")) { model.discardConfigurationChanges() }
+        }
     }
 
     private func footerDetail(for key: RemoteKey, action: AgentAction?, learned: InputCode?) -> String? {

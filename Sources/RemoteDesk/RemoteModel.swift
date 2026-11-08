@@ -34,7 +34,7 @@ enum RemoteReadiness: Equatable {
         case .monitorUnavailable: L10n.tr("已连接 · 监听未启动")
         case .listening: L10n.tr("已连接 · 正在监听")
         case .paused: L10n.tr("已暂停响应 · 仍可测试按键")
-        case .diagnosing: L10n.tr("诊断中 · 动作暂停")
+        case .diagnosing: L10n.tr("正在测试按键 · 动作暂停")
         case .calibrating: L10n.tr("校准中 · 动作暂停")
         }
     }

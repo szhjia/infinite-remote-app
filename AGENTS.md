@@ -17,6 +17,8 @@ Use Xcode or Command Line Tools with Swift 6. Run these commands from the reposi
 - `./scripts/build-app.sh` builds, signs, and verifies the release app in `dist/`.
 - `open "dist/Infinite Remote.app"` launches the packaged app for desktop checks.
 
+For macOS DMG or ZIP delivery, including local test installers, follow the repository's [Infinite Remote release skill](.agents/skills/infinite-remote-release/SKILL.md). Use `./scripts/package-dmg.sh` to turn the signed app into a drag-to-install DMG. Open the mounted image in Finder and verify the lavender background, the animated right arrow, the app on the left, and the `Applications` shortcut on the right. Check that the shortcut resolves to `/Applications`. The `./scripts/package-release.sh` command produces a ZIP archive.
+
 Keep only one Infinite Remote instance running for local previews. Before opening a newly built app, identify any running copies by their bundle paths, quit the older copies normally, and verify that only the latest build is running after launch. If the latest build is already running, bring it forward instead of opening another copy. Debug builds enforce one running instance per macOS user, including launches from different build paths.
 
 For repeated hardware testing, use a consistent `REMOTEDESK_SIGNING_IDENTITY` to retain macOS privacy grants across rebuilds. HID listening requires Input Monitoring. System shortcuts and accessibility-driven actions require Accessibility access.

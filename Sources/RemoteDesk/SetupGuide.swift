@@ -10,6 +10,7 @@ struct SetupGuide: View {
     let saveStage: (SetupStage) -> Void
     let deferSetup: () -> Void
     let finish: () -> Void
+    let restart: () -> Void
     @State private var stage: SetupStage
     @State private var waitsForRemoteOnResume: Bool
     @State private var voiceDriverReady = false
@@ -18,13 +19,14 @@ struct SetupGuide: View {
     init(model: RemoteModel, library: ResourceLibrary, stage: SetupStage,
          showsKeyboardFocus: @escaping () -> Bool = { false },
          saveStage: @escaping (SetupStage) -> Void, deferSetup: @escaping () -> Void,
-         finish: @escaping () -> Void) {
+         finish: @escaping () -> Void, restart: @escaping () -> Void) {
         self.model = model
         self.library = library
         self.showsKeyboardFocus = showsKeyboardFocus
         self.saveStage = saveStage
         self.deferSetup = deferSetup
         self.finish = finish
+        self.restart = restart
         let readiness = SetupReadiness(model: model)
         let restored = stage.restored(hasModel: model.hasRemote, readiness: readiness)
         _stage = State(initialValue: restored)
@@ -95,10 +97,16 @@ struct SetupGuide: View {
             if let previous = stage.adjacent(-1) {
                 Button(L10n.tr("上一步")) { stage = previous }
             }
-            Button(primaryTitle, action: advance)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canAdvance)
+            if stage == .permissions && model.shortcutsNeedRestart {
+                Button(L10n.tr("重启应用"), action: restart)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            } else {
+                Button(primaryTitle, action: advance)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canAdvance)
+            }
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 16)
@@ -158,10 +166,6 @@ struct SetupGuide: View {
         VStack(alignment: .leading, spacing: 16) {
             PermissionChecklist(model: model) {
                 saveStage(.permissions)
-            }
-            if model.shortcutsNeedRestart || readiness.needsSeparateInputAuthorization {
-                Text(L10n.tr("重新打开后会回到这一步。"))
-                    .font(.caption).foregroundStyle(.secondary)
             }
             if !readiness.connected {
                 Label(L10n.tr("正在等待遥控器连接。若未连上，可返回上一步检查蓝牙。"), systemImage: "antenna.radiowaves.left.and.right")
@@ -238,7 +242,7 @@ private struct SetupRemoteStep: View {
             } else {
                 VStack(spacing: 12) {
                     if isRefreshing || source.map({ $0.catalog == nil && library.errors[$0.id] == nil }) == true {
-                        ProgressView(L10n.tr("正在载入默认遥控器…"))
+                        ProgressView(L10n.tr("正在载入遥控器型号…"))
                     } else {
                         Text(L10n.tr("暂时没有可用的遥控器型号。")).font(.headline)
                         if let source, let error = library.errors[source.id] ?? library.storageError {

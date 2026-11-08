@@ -56,6 +56,9 @@ struct RemoteDeskApp: App {
                     CheckForUpdatesButton(appUpdater: appUpdater)
                 }
             }
+            CommandGroup(after: .appSettings) {
+                Button(L10n.tr("测试按键"), action: windows.showButtonTest)
+            }
         }
     }
 
@@ -78,35 +81,27 @@ private struct TrayMenu: View {
     let windows: RemoteWindows
 
     var body: some View {
+        let remoteIsVisible = windows.isRemoteModelVisible && model.hasRemote
         Text(model.connectionStatus)
         Divider()
         Button(L10n.tr("打开工作台"), action: windows.showWorkspace)
         if windows.needsInitialSetup && windows.didDeferSetup {
             Button(L10n.tr("继续设置遥控器"), action: windows.showSetup)
         }
-        Button((windows.isRemoteModelVisible && model.hasRemote) ? L10n.tr("隐藏遥控器模型") : L10n.tr("显示遥控器模型")) {
-            windows.toggleRemoteModel()
-        }.disabled(!model.hasRemote || windows.needsInitialSetup)
+        Button(L10n.tr(remoteIsVisible ? "隐藏遥控器" : "显示遥控器"), action: windows.toggleRemoteModel)
+            .disabled(!model.hasRemote || windows.needsInitialSetup)
         Toggle(L10n.tr("响应遥控器"), isOn: $model.isEnabled)
         Divider()
         if let dictationStatus = model.dictation.phase.message {
             Text(dictationStatus)
         }
-        Button {
-            windows.showDiagnostics()
-        } label: {
-            Label {
-                Text(L10n.tr("按键诊断…"))
-            } icon: {
-                Image("BridgeDiagnostics", bundle: .module)
-            }
-        }
+        Button(L10n.tr("测试按键"), action: windows.showButtonTest)
         if let appUpdater = windows.appUpdater {
             CheckForUpdatesButton(appUpdater: appUpdater)
         }
         SettingsLink { Text(L10n.tr("设置…")) }
         Divider()
-        Button(L10n.tr("退出无限遥控器")) { NSApp.terminate(nil) }
+        Button(L10n.tr("退出")) { NSApp.terminate(nil) }
     }
 }
 
@@ -143,7 +138,7 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var isTerminating = false
     private static let remoteModelVisibilityKey = "RemoteDesk.remoteModelVisible"
     private static let remoteAlwaysOnTopKey = "RemoteDesk.remoteAlwaysOnTop"
-    private var diagnostics: NSWindow?
+    private var buttonTestWindow: NSWindow?
 
     private var remoteWindowLevel: NSWindow.Level { isRemoteAlwaysOnTop ? .floating : .normal }
 
@@ -377,7 +372,6 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                   content: Workspace(model: model, library: resourceLibrary,
                                       page: Binding(get: { [weak self] in self?.workspacePage ?? .remote },
                                                     set: { [weak self] in self?.workspacePage = $0 }),
-                                      showDiagnostics: { [weak self] in self?.showDiagnostics() },
                                       showSettings: { [weak self] in self?.showSettings($0) },
                                       layout: layout,
                                       firstKeyToConfigure: Binding(
@@ -430,7 +424,8 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                           showsKeyboardFocus: { [weak self] in self?.showsSetupKeyboardFocus ?? false },
                                           saveStage: { SetupStartup.save($0, in: .standard) },
                                           deferSetup: { [weak self] in self?.deferSetup() },
-                                          finish: { [weak self] in self?.finishSetup() }))
+                                          finish: { [weak self] in self?.finishSetup() },
+                                          restart: { [weak self] in self?.restartForSetup() }))
             window.collectionBehavior.insert(.fullScreenNone)
             setupWindow = window
         }
@@ -460,6 +455,21 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showWorkspace()
     }
 
+    private func restartForSetup() {
+        guard !isTerminating, model.shortcutsNeedRestart else { return }
+        SetupStartup.save(.permissions, in: .standard)
+        do {
+            try AppRelaunch.schedule(after: ProcessInfo.processInfo.processIdentifier,
+                                     bundleURL: Bundle.main.bundleURL, executableURL: Bundle.main.executableURL)
+            NSApp.terminate(nil)
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.messageText = L10n.tr("无法重新启动无限遥控器")
+            alert.informativeText = L10n.tr("请退出并重新打开无限遥控器，以启用快捷键。")
+            if let setupWindow { alert.beginSheetModal(for: setupWindow) }
+        }
+    }
+
     private func finishSetup() {
         guard SetupReadiness(model: model).canFinish,
               let key = model.keys.first(where: { $0.id == "voice" })
@@ -484,17 +494,17 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.performActionForItem(at: index)
     }
 
-    func showDiagnostics() {
-        if diagnostics == nil {
-            diagnostics = titledWindow(L10n.tr("按键诊断"), size: NSSize(width: 540, height: 450),
-                content: SignalDiagnostics(model: model, showPermissions: { [weak self] in
+    func showButtonTest() {
+        if buttonTestWindow == nil {
+            buttonTestWindow = titledWindow(L10n.tr("测试按键"), size: NSSize(width: 540, height: 320),
+                content: ButtonTestView(model: model, showPermissions: { [weak self] in
                     self?.showSettings(.permissions)
                 }, showWorkspace: { [weak self] in
                     self?.showWorkspace()
-                }, close: { [weak self] in self?.diagnostics?.close() }))
+                }, close: { [weak self] in self?.buttonTestWindow?.close() }))
         }
         model.setDiagnosing(true)
-        present(diagnostics)
+        present(buttonTestWindow)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -509,9 +519,9 @@ final class RemoteWindows: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if notification.object as? NSWindow === setupWindow {
             setupWindow = nil
         }
-        if notification.object as? NSWindow === diagnostics {
+        if notification.object as? NSWindow === buttonTestWindow {
             model.setDiagnosing(false)
-            diagnostics = nil
+            buttonTestWindow = nil
         }
         if notification.object as? NSWindow === configuration, !isTerminating {
             model.cancelLearning()

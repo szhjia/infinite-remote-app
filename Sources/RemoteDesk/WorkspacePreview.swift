@@ -26,12 +26,12 @@ private struct WorkspacePreview: View {
                                    description: Text(error))
         } else if installModel {
             Workspace(model: fixture.model, library: fixture.library, page: $page,
-                      showDiagnostics: {}, showSettings: { _ in })
+                      showSettings: { _ in })
                 .defaultAppStorage(fixture.defaults)
                 .frame(width: WorkspaceLayout.defaults.initialSize.width, height: WorkspaceLayout.defaults.initialSize.height)
         } else {
             SetupGuide(model: fixture.model, library: fixture.library, stage: .welcome,
-                       saveStage: { _ in }, deferSetup: {}, finish: {})
+                       saveStage: { _ in }, deferSetup: {}, finish: {}, restart: {})
                 .defaultAppStorage(fixture.defaults)
                 .frame(width: SetupGuide.windowSize.width, height: SetupGuide.windowSize.height)
         }
