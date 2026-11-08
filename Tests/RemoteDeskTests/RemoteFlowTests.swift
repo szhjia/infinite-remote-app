@@ -630,6 +630,50 @@ func xiaomiHomeReportsAreOnePressDuringLearningAndAfterRemapping(directFirst: Bo
 }
 
 @Test @MainActor
+func xiaomiDirectionsRouteOneSwitcherMovePerPhysicalPress() throws {
+    let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
+    let input = InputFixture(devices: [device])
+    input.state = .listening
+    input.capturesKeyboard = true
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var catalog = RemoteCatalog(directory: directory.appending(path: "RemoteModels"))
+    let package = try #require(Bundle.module.url(forResource: "xiaomi-2-pro", withExtension: nil,
+                                                subdirectory: "Fixtures/Packages"))
+    _ = try catalog.install(package, configuredSlotsByModel: [:])
+    let model = fixtureRemoteModel(hid: input, storeURL: directory.appending(path: "configuration.json")) { action, _ in
+        Issue.record("Unexpected action while switching apps: \(action)")
+    }
+    model.refreshPermissions()
+    var visible = false
+    var moves: [String] = []
+    model.onSwitchApps = { visible = true }
+    model.onMediaKey = { slot, nativeKeyboard in
+        guard visible else { return false }
+        #expect(!nativeKeyboard)
+        moves.append(slot)
+        return true
+    }
+    input.press(device, .init(collectionPage: 1, collectionUsage: 6, page: 7, usage: 0x65, report: 1, value: 1))
+    try #require(visible)
+
+    for (slot, usage) in [("right", 0x4F), ("left", 0x50), ("down", 0x51), ("up", 0x52)] {
+        let array = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                              usage: Int(UInt32.max), report: 1, value: usage)
+        let discrete = InputCode(collectionPage: 1, collectionUsage: 6, page: 7,
+                                 usage: usage, report: 1, value: 1)
+        let reports = [(array, RemoteInputOrigin(endpoint: 8, cookie: 1)),
+                       (discrete, RemoteInputOrigin(endpoint: 8, cookie: usage))]
+        moves.removeAll()
+        for order in [reports, Array(reports.reversed())] {
+            for (code, origin) in order { input.onEvent(device, .pressed(code, origin: origin)) }
+            for (code, origin) in order { input.onEvent(device, .released(code, origin: origin)) }
+        }
+        #expect(moves == [slot, slot])
+    }
+}
+
+@Test @MainActor
 func mediaAndRunningAppChoosersConsumeNavigationBeforeConfiguredActions() throws {
     let device = DeviceID(vendor: 0x2717, product: 0x32B8, name: "小米 2 Pro")
     let tv = InputCode(collectionPage: 12, collectionUsage: 1, page: 12, usage: 0x61, report: 1, value: 1)

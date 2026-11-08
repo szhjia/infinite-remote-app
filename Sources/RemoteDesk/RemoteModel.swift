@@ -966,9 +966,7 @@ final class RemoteModel {
     }
 
     private func aliasedKey(for input: InputCode) -> String? {
-        guard let key = remoteDefinition.slot(for: input),
-              remoteDefinition.manifest.behavior.coalescedKeys.contains(key) else { return nil }
-        return key
+        remoteDefinition.coalescedSlot(for: input)
     }
 
     private func learnedSlot(for input: InputCode, in remote: RemoteMap?) -> String? {
@@ -983,7 +981,7 @@ final class RemoteModel {
         let visibleSlot = knownSlot.flatMap { candidate in keys.first { $0.id == candidate } }
         record(L10n.format("按下 · %@%@", String(describing: visibleSlot.map { $0.name + " · " } ?? ""), String(describing: input.label)))
 
-        // The RC003 can send both a keyboard array report and a discrete report for one press.
+        // Multiple HID elements can describe the same physical press.
         if let key = aliasedKey(for: input), let origin {
             if aliasedPresses[key] != nil {
                 aliasedPresses[key]?.origins.insert(origin)

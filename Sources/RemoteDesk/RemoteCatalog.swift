@@ -162,6 +162,16 @@ struct RemoteDefinition {
     }
     func slot(for input: InputCode) -> String? { inputs.first { $0.matches(input) }?.key }
 
+    func coalescedSlot(for input: InputCode) -> String? {
+        guard let rule = inputs.first(where: { $0.matches(input) }) else { return nil }
+        if manifest.behavior.coalescedKeys.contains(rule.key) { return rule.key }
+        // macOS can expose a keyboard array and its per-key element for the
+        // same arrow press. Only merge arrows whose rule accepts both forms.
+        guard rule.acceptsArray == true, let usage = input.keyboardUsage,
+              (0x4F...0x52).contains(usage) else { return nil }
+        return rule.key
+    }
+
     static func read(_ folder: URL) throws -> Self {
         let directory = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard directory.isDirectory == true, directory.isSymbolicLink != true else {
