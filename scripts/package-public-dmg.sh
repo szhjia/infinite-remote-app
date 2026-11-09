@@ -34,6 +34,7 @@ git archive --format=tar "$expected" | tar -xf - -C "$stage/source"
     export CLANG_MODULE_CACHE_PATH="$stage/modules"
     export SWIFTPM_MODULECACHE_OVERRIDE="$stage/modules"
     export REMOTEDESK_SOURCE_COMMIT="$expected"
+    bash Tests/ReleaseScripts/notarize-release-test.sh
     swift test --force-resolved-versions
     bash scripts/build-app.sh
     app='dist/Infinite Remote.app'

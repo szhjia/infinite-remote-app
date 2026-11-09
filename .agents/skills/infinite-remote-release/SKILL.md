@@ -22,7 +22,8 @@ description: 为 Infinite Remote macOS App 重新打包、签名、提交 Apple 
 
 ## Apple 公证与首次打开
 
-- 公证的是待分发的确切产物；先公证和验收，再发布 GitHub。使用 `xcrun notarytool submit <DMG> --keychain-profile <profile> --output-format json`。本机已用过的 profile 名为 `infinite-remote-notary`；先确认当前环境可用，凭证留在钥匙串。记录提交 ID，用 `notarytool info` 或有界的 `notarytool wait` 跟踪。只有 `Accepted` 才算通过；失败查该 ID 的 `notarytool log`，避免重复提交同一文件。
+- 公证的是待分发的确切产物。先运行 `bash scripts/notarize-release.sh submit <DMG>`，需要时用 `NOTARY_KEYCHAIN_PROFILE` 指定钥匙串配置，默认 `infinite-remote-notary`。脚本只在上传命令成功退出且返回 `Successfully uploaded file` 和有效提交 ID 时，将回执与旁边 `<DMG>.notary/` 中的原包 SHA-256 关联。拿到提交 ID 或看到 `In Progress` 仅说明 Apple 已创建记录。默认端点上传超时，脚本对同一文件用 `--no-s3-acceleration` 重试一次。若仍无成功回执，检查该目录中的结果和错误日志。确认文件未上传并排除故障后，把该目录改名留存再运行 `submit`。
+- 确认上传后单独运行 `bash scripts/notarize-release.sh wait <DMG> [timeout]`，默认等 15 分钟。脚本核对 SHA-256 并使用已记录的 ID。等待超时后继续运行 `wait` 或用 `notarytool info` 查询同一 ID。只有 `Accepted` 才继续装订，核对 `notarytool log` 中的文件名及 SHA-256；审核失败时用该日志定位原因。需要单独公证 ZIP 时使用相同的两步流程。
 - 对 DMG 执行 `xcrun stapler staple` 和 `xcrun stapler validate`。若也分发 ZIP，从本次 DMG 取出同一签名的 App，验证是否能取得 App 自己的票据；拿不到就单独公证 ZIP。ZIP 不能直接装订：装订 App 后重新压缩。票据装订后再生成最终的 SHA-256，后续不重签、不修改已公证的可执行内容。
 - 验证最终包：签名、票据、校验和；在 Gatekeeper 开启的环境用 `spctl --assess --type execute --verbose=4 <App>` 验证从最终包取出的 App。尽量在干净环境从真实下载包首次打开，核对版本及本次改动；不要清除隔离属性或降低系统保护来取得通过。签名通过、Apple 接受、票据验证通过、Gatekeeper 通过、首次打开通过分别记录。
 
