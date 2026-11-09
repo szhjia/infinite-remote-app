@@ -457,9 +457,18 @@ final class RemoteModel {
             for (slot, command) in navigation where definition.actionSlots.contains(slot) {
                 actions[slot] = .finder(command)
             }
-        } else if target.bundleID == AppTarget.chatGPT.bundleID, definition.actionSlots.contains("voice"),
-                  config.defaultVoiceByModel?[definition.id] == nil {
-            actions["voice"] = .chatGPTDraft
+        } else if target.bundleID == AppTarget.chatGPT.bundleID {
+            if definition.actionSlots.contains("voice"), config.defaultVoiceByModel?[definition.id] == nil {
+                actions["voice"] = .chatGPTDraft
+            }
+            if supportsCodexControls(definition) {
+                for (key, command) in [("up", CodexConversationCommand.scrollUp), ("down", .scrollDown)] {
+                    actions[key] = .codexConversation(command)
+                    if definition.actionSlots.contains(key + "-long") {
+                        actions[key + "-long"] = .codexConversation(command)
+                    }
+                }
+            }
         }
         for slot in definition.actionSlots {
             if let action = globalAction(slot, definition: definition) { actions[slot] = action }
@@ -491,18 +500,18 @@ final class RemoteModel {
         }
     }
 
+    private func supportsCodexControls(_ definition: RemoteDefinition) -> Bool {
+        isChatGPTEnabled && definition.id == RemoteDefinition.xiaomiID
+            && definition.manifest.behavior.nativeDictationKeys.contains("voice")
+            && Set(Self.codexPhysicalKeys.values).isSubset(of: definition.actionSlots)
+    }
+
     private func codexPreset(for definition: RemoteDefinition, app: AppTarget, defaults: AgentProfile) -> AgentProfile? {
-        guard isChatGPTEnabled, definition.id == "xiaomi-2-pro", app.bundleID == AppTarget.chatGPT.bundleID,
-              definition.manifest.behavior.nativeDictationKeys.contains("voice"),
-              Set(Self.codexPhysicalKeys.values).isSubset(of: definition.actionSlots) else { return nil }
+        guard app.bundleID == AppTarget.chatGPT.bundleID, supportsCodexControls(definition) else { return nil }
         var actions = defaults.actions
         actions["voice"] = .chatGPTDraft
         actions["ok"] = .codexConversation(.sendTranscript)
         actions["back"] = .codexConversation(.discardConfirmation)
-        for (key, command) in [("up", CodexConversationCommand.scrollUp), ("down", .scrollDown)] {
-            actions[key] = .codexConversation(command)
-            if definition.actionSlots.contains(key + "-long") { actions[key + "-long"] = .codexConversation(command) }
-        }
         return AgentProfile(id: Self.codexPresetID, name: L10n.tr("Codex 续聊（实验）"),
                             target: app, actions: actions, modelID: definition.id)
     }
@@ -511,13 +520,8 @@ final class RemoteModel {
     var editingCodexPreset: Bool { profile.map(isCodexPreset) == true }
 
     private func usesCodexPreset(in context: ForegroundContext?) -> Bool {
-        guard context?.bundleID == AppTarget.chatGPT.bundleID, isChatGPTEnabled,
-              remoteDefinition.id == "xiaomi-2-pro",
-              config.activeProfileID(modelID: remoteDefinition.id, bundleID: AppTarget.chatGPT.bundleID)
-                == Self.codexPresetID else { return false }
-        let definition = remoteDefinition
-        return definition.manifest.behavior.nativeDictationKeys.contains("voice")
-            && Set(Self.codexPhysicalKeys.values).isSubset(of: definition.actionSlots)
+        context?.bundleID == AppTarget.chatGPT.bundleID && supportsCodexControls(remoteDefinition)
+            && config.activeProfileID(modelID: remoteDefinition.id, bundleID: AppTarget.chatGPT.bundleID) == Self.codexPresetID
     }
 
     private func selectProfileID(_ id: String, in updated: inout Configuration, target: AppTarget? = nil) {
@@ -1200,6 +1204,12 @@ final class RemoteModel {
             }
             return
         }
+        if case let .codexConversation(command) = action, command.scrollsReply, let context,
+           double == nil, hold == nil || hold == action {
+            scrollCodexReply(command, input: input, origin: origin, captured: captured, context: context,
+                             repeatAfter: hold == nil ? nil : powerHoldDelay)
+            return
+        }
         if remoteDefinition.manifest.behavior.deferredKeys.contains(key) || hold != nil || double != nil {
             startGesture(visibleSlot, input: input, origin: origin, context: context)
         } else if let action {
@@ -1318,36 +1328,49 @@ final class RemoteModel {
             cancelCodexDraft()
             feedback = L10n.tr("已取消遥控器发送确认，草稿保留。")
         case "up", "down":
-            cancelCodexScroll()
-            guard let scroll = codexAccess.scroll(context, key == "up" ? .scrollUp : .scrollDown), scroll() else {
-                feedback = L10n.tr(Self.codexTargetUnavailable)
-                return
-            }
-            feedback = nil
-            let task = Task { [weak self, powerHoldDelay] in
-                do { try await Task.sleep(for: powerHoldDelay) } catch { return }
-                while !Task.isCancelled {
-                    guard let self else { return }
-                    guard self.isEnabled, self.canReadKeys, self.canUseAccessibility, self.canPost,
-                          self.usesCodexPreset(in: context), context.matches(self.foreground()) else {
-                        self.cancelCodexScroll()
-                        return
-                    }
-                    guard self.hid.captures(input, from: origin) else {
-                        self.keyboardCaptureChanged(false)
-                        return
-                    }
-                    guard scroll() else {
-                        self.cancelCodexScroll()
-                        self.feedback = L10n.tr(Self.codexTargetUnavailable)
-                        return
-                    }
-                    do { try await Task.sleep(for: .milliseconds(130)) } catch { return }
-                }
-            }
-            codexScroll = (input, origin, task)
+            scrollCodexReply(key == "up" ? .scrollUp : .scrollDown, input: input, origin: origin,
+                             captured: captured, context: context, repeatAfter: powerHoldDelay)
         default: break
         }
+    }
+
+    private func scrollCodexReply(_ command: CodexConversationCommand, input: InputCode,
+                                  origin: RemoteInputOrigin?, captured: Bool, context: ForegroundContext,
+                                  repeatAfter: Duration?) {
+        cancelCodexScroll()
+        guard captured, let origin, canUseAccessibility, canPost else {
+            feedback = L10n.tr(Self.codexCaptureUnavailable)
+            return
+        }
+        guard context.bundleID == AppTarget.chatGPT.bundleID, context.matches(foreground()),
+              let scroll = codexAccess.scroll(context, command), scroll() else {
+            feedback = L10n.tr(Self.codexTargetUnavailable)
+            return
+        }
+        feedback = nil
+        guard let repeatAfter else { return }
+        let task = Task { [weak self] in
+            do { try await Task.sleep(for: repeatAfter) } catch { return }
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard self.isEnabled, self.canReadKeys, self.canUseAccessibility, self.canPost,
+                      context.matches(self.foreground()) else {
+                    self.cancelCodexScroll()
+                    return
+                }
+                guard self.hid.captures(input, from: origin) else {
+                    self.keyboardCaptureChanged(false)
+                    return
+                }
+                guard scroll() else {
+                    self.cancelCodexScroll()
+                    self.feedback = L10n.tr(Self.codexTargetUnavailable)
+                    return
+                }
+                do { try await Task.sleep(for: .milliseconds(130)) } catch { return }
+            }
+        }
+        codexScroll = (input, origin, task)
     }
 
     private func cancelMicrophonePress() {
@@ -1488,7 +1511,8 @@ final class RemoteModel {
         guard var press = gestures[key.id], !press.firedHold else { return }
         press.firedHold = true
         gestures[key.id] = press
-        runGesture(key.holdSlot, for: key, input: press.input, origin: press.origin, context: press.context)
+        runGesture(key.holdSlot, for: key, input: press.input, origin: press.origin, context: press.context,
+                   held: true)
     }
 
     private func finishGesture(_ input: InputCode, origin: RemoteInputOrigin?) {
@@ -1523,13 +1547,18 @@ final class RemoteModel {
     }
 
     private func runGesture(_ slot: String, for key: RemoteKey, input: InputCode, origin: RemoteInputOrigin?,
-                            context: ForegroundContext?) {
+                            context: ForegroundContext?, held: Bool = false) {
         guard isEnabled, canReadKeys, !isDiagnosing, learning == nil, calibrationConflict == nil,
               !dictation.phase.active, sameFocus(context),
               let action = gestureAction(slot, for: key, context: context) else { return }
         let captured = hid.captures(input, from: origin)
         if !captured, input.hasNativeKeyboardEvent,
            remoteDefinition.slot(for: input) != key.id || action != remoteDefinition.manifest.defaults[slot] { return }
+        if case let .codexConversation(command) = action, command.scrollsReply, let context {
+            scrollCodexReply(command, input: input, origin: origin, captured: captured, context: context,
+                             repeatAfter: held ? .milliseconds(130) : nil)
+            return
+        }
         dispatch(action, input: input, native: slot == key.id && !captured, context: context)
     }
 

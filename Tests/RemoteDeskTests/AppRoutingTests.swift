@@ -178,8 +178,8 @@ func codexPresetCancelsDraftWithoutSynthesizingEnterOrEscape(_ interruption: Str
     }
 }
 
-@Test @MainActor
-func codexPresetScrollsImmediatelyRepeatsWhileHeldAndDoesNotLeakIntoOtherApps() async throws {
+@Test(arguments: [false, true]) @MainActor
+func chatGPTScrollsImmediatelyRepeatsWhileHeldAndDoesNotLeakIntoOtherApps(experimental: Bool) async throws {
     let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
     let fixture = RoutingFixture()
@@ -190,8 +190,10 @@ func codexPresetScrollsImmediatelyRepeatsWhileHeldAndDoesNotLeakIntoOtherApps() 
     })
     let model = fixture.model(in: folder, codexAccess: access)
     model.selectEditingApp(.chatGPT)
-    let preset = try #require(model.profiles.first(where: model.isCodexPreset))
-    try #require(model.selectProfile(preset.id))
+    if experimental {
+        let preset = try #require(model.profiles.first(where: model.isCodexPreset))
+        try #require(model.selectProfile(preset.id))
+    }
     fixture.send(0x52, down: true)
     #expect(scrolled == [.scrollUp])
     await waitForRouting { scrolled.count >= 2 }
@@ -209,6 +211,59 @@ func codexPresetScrollsImmediatelyRepeatsWhileHeldAndDoesNotLeakIntoOtherApps() 
     #expect(fixture.executed.first?.0 == AgentProfile.defaults.actions["ok"])
     #expect(fixture.executed.first?.1 == "com.tencent.xinWeChat")
     #expect(scrolled.count == afterRelease + 1)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func defaultChatGPTKeepsNativeF5AndDeliversPlainReturnOnce(captured: Bool) async throws {
+    let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let fixture = RoutingFixture()
+    fixture.focus = .init(bundleID: AppTarget.chatGPT.bundleID, pid: 14)
+    fixture.captured = captured
+    let model = fixture.model(in: folder, codexAccess: .init(session: { _ in
+        Issue.record("The default profile should leave dictation to ChatGPT")
+        return nil
+    }, scroll: { _, _ in nil }))
+    model.selectEditingApp(.chatGPT)
+    #expect(fixture.preservesNativeF5)
+    fixture.tap(0x3E)
+    fixture.tap(0x28)
+    if captured {
+        await waitForRouting { fixture.executed.count == 1 }
+        #expect(fixture.executed.first?.0 == .foregroundKey(.init(keyCode: 36, modifiers: [], keyName: "Return")))
+        #expect(fixture.executed.first?.1 == AppTarget.chatGPT.bundleID)
+    } else {
+        await Task.yield()
+        #expect(fixture.executed.isEmpty)
+    }
+    #expect(fixture.voice.isEmpty)
+}
+
+@Test @MainActor
+func chatGPTScrollingSurvivesSavingACustomProfileAndLeavesOtherGesturesAvailable() async throws {
+    let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let fixture = RoutingFixture()
+    fixture.focus = .init(bundleID: AppTarget.chatGPT.bundleID, pid: 14)
+    var scrolled: [CodexConversationCommand] = []
+    let access = CodexConversationControl.Access(session: { _ in nil }, scroll: { _, command in
+        { scrolled.append(command); return true }
+    })
+    let model = fixture.model(in: folder, codexAccess: access)
+    model.selectEditingApp(.chatGPT)
+    model.setAction(.shortcut(AgentProfile.newChat), for: "up-double")
+    try #require(model.saveConfigurationChanges(as: "ChatGPT with double tap"))
+
+    let reopened = fixture.model(in: folder, codexAccess: access)
+    reopened.selectEditingApp(.chatGPT)
+    #expect(reopened.profile?.name == "ChatGPT with double tap")
+    fixture.tap(0x52)
+    await waitForRouting(timeout: .seconds(10)) { !scrolled.isEmpty }
+    try #require(scrolled == [.scrollUp])
+    fixture.doubleTap(0x52)
+    await waitForRouting(timeout: .seconds(10)) { fixture.executed.count == 1 }
+    #expect(fixture.executed.first?.0 == .shortcut(AgentProfile.newChat))
+    #expect(scrolled == [.scrollUp])
 }
 
 @Test @MainActor

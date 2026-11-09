@@ -153,7 +153,7 @@ struct RemoteDefinition {
         actions.keys.allSatisfy(actionSlots.contains)
             && !actions.values.contains(where: \.isRemovedVoiceBinding)
             && !actions.values.contains(where: {
-                if case .codexConversation = $0 { return true }
+                if case let .codexConversation(command) = $0 { return !command.scrollsReply }
                 return false
             })
             && layout.keys.allSatisfy { key in

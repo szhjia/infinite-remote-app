@@ -66,6 +66,10 @@ func legacyModelProfile(_ profile: AgentProfile) -> AgentProfile {
         profile.name = L10n.tr("默认配置")
         profile.actions["home"] = .openFinder
         profile.actions["voice"] = .chatGPTDraft
+        profile.actions["up"] = .codexConversation(.scrollUp)
+        profile.actions["up-long"] = .codexConversation(.scrollUp)
+        profile.actions["down"] = .codexConversation(.scrollDown)
+        profile.actions["down-long"] = .codexConversation(.scrollDown)
     }
     return profile
 }

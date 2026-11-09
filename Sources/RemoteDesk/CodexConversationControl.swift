@@ -3,6 +3,8 @@ import ApplicationServices
 import RemoteCore
 
 extension CodexConversationCommand {
+    var scrollsReply: Bool { self == .scrollUp || self == .scrollDown }
+
     var title: String {
         switch self {
         case .scrollUp: L10n.tr("向上滚动回复")
